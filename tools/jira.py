@@ -14,12 +14,12 @@ if not all([JIRA_URL, JIRA_API_TOKEN]):
 # ─── create a Jira client ─────────────────────────────────────────────────────
 jira_client = JIRA(server=JIRA_URL, token_auth=JIRA_API_TOKEN)
 
-def search_jira(jql: str) -> str:
+def search_jira(jql: str, max_results: int = 50) -> str:
     """
     Search Jira for issues matching the given JQL query.
-    Returns a newline‑separated summary of issue keys + titles.
+    Returns a newline-separated summary of issue keys + titles.
     """
-    issues = jira_client.search_issues(jql, maxResults=10)
+    issues = jira_client.search_issues(jql, maxResults=max_results)
     if not issues:
         return "No issues found."
     lines = [f"{iss.key}: {iss.fields.summary}" for iss in issues]

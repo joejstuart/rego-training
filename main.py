@@ -37,6 +37,34 @@ def summarize_jira(jql: str) -> str:
     msg = HumanMessage(content=prompt)
     return llm([msg]).content
 
+# ─── Helper to generate a polished summary + AC without creating an issue ────
+def format_jira_ac(arg: str) -> str:
+    """
+    Input: free-form raw issue details.
+    Output: a polished one-line Summary and a bullet-list Acceptance Criteria.
+    """
+
+    prompt = f"""
+You are an expert Jira issue writer.
+Acronyms:
+- EC = Enterprise Contract
+- VSA = Verification Summary Attestation
+
+Raw details: {arg.strip()}
+
+Generate exactly this format. **The acceptance criteria should be concise and guide the developer on the desired behavior of the feature.**
+
+Summary: <one-line, imperative summary>
+
+Acceptance Criteria:
+- <concise criterion 1>
+- <concise criterion 2>
+- ...
+"""
+    # call the LLM with a HumanMessage
+    msg = HumanMessage(content=prompt)
+    return llm([msg]).content
+
 # jira tools
 jira_tools = [
     Tool(
@@ -47,12 +75,20 @@ jira_tools = [
     Tool(
         name="jira-create",
         func=create_jira_issue,
-        description="Use this to create a Jira issue. Input should be a comma‑separated string: project_key, summary, description.",
+        description="Use this to create a Jira issue. Input should be a comma-separated string: project_key, summary, description.",
     ),
     Tool(
         name="jira-summarize",
         func=summarize_jira,
         description="Use this to summarize Jira issues. Input should be a JQL query.",
+    ),
+    Tool(
+        name="jira-format-ac",
+        func=format_jira_ac,
+        description=(
+            "Generate a polished summary and acceptance criteria from raw issue details."
+            "Input should be the free-form issue description."
+        ),
     ),
 ]
 
@@ -75,7 +111,7 @@ agent = initialize_agent(
     memory=memory,
     verbose=True,
     agent_kwargs={
-        "prefix": "You are Granite‑3.2‑8b‑instruct, a reasoning expert.\n\n{chat_history}\nHuman: {input}\nAssistant:",
+        "prefix": "You are Granite-3.2-8b-instruct, a reasoning expert.\n\n{chat_history}\nHuman: {input}\nAssistant:",
         # you can also override format_instructions and suffix here if you want
     },
 )
