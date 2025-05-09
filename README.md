@@ -8,7 +8,7 @@ Follow these steps to configure and run the agent.
 
 ---
 
-### Models corp documentation
+### models.corp documentation
 
 https://gitlab.cee.redhat.com/models-corp/user-documentation
 
