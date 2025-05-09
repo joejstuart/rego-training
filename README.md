@@ -47,6 +47,12 @@ The `jira_search` tells the model to use the `search_jira` function.
 jira-search project = EC AND assignee = jjstuart-rh AND status = 'In Progress'
 ```
 
+Or more free-form
+
+```
+search Jira for all issues in project EC with assignee jjstuart-rh that are 'In Progress'
+```
+
 ### Summarize Jira issues
 
 ```
