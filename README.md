@@ -58,3 +58,11 @@ search Jira for all issues in project EC with assignee jjstuart-rh that are 'In 
 ```
 jira-summarize project = EC AND assignee = jjstuart-rh AND status = 'In Progress'
 ```
+
+### Help with Jira story creation
+
+Give it details of what you want. The model will return a summary and acceptance criteria.
+
+```
+jira-format-ac I want to create a VSA after EC verifies the slsa provenance of an image. This should be configurable with parameters and the VSA should be stored in Rekor
+```
