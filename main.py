@@ -1,9 +1,10 @@
 from langchain.chat_models import ChatOpenAI
 from langchain.agents import load_tools, initialize_agent, Tool
 from langchain.memory import ConversationBufferMemory
+from langchain.schema import HumanMessage
 import os
 from dotenv import load_dotenv
-from tools.jira import search_jira, create_jira_issue
+from tools.jira import search_jira, create_jira_issue, fetch_jira_descriptions
 
 load_dotenv()
 MODEL_API = os.environ["MODEL_API"]
@@ -19,6 +20,22 @@ llm = ChatOpenAI(
     temperature=0.7,
 )
 
+# ─── helper that ties JQL → descriptions → LLM summary ────────────────────────
+def summarize_jira(jql: str) -> str:
+    """
+    Tool: run the JQL, pull descriptions, and ask the LLM to summarize them.
+    """
+    blob = fetch_jira_descriptions(jql)
+    prompt = (
+        "Below are Jira issue descriptions:\n\n"
+        f"{blob}\n\n"
+        "Please provide a concise summary of the main themes and "
+        "any common blockers or patterns."
+    )
+    # send as a single chat message
+    msg = HumanMessage(content=prompt)
+    return llm([msg]).content
+
 jira_tools = [
     Tool(
         name="jira-search",
@@ -29,6 +46,11 @@ jira_tools = [
         name="jira-create",
         func=create_jira_issue,
         description="Use this to create a Jira issue. Input should be a comma‑separated string: project_key, summary, description.",
+    ),
+    Tool(
+        name="jira-summarize",
+        func=summarize_jira,
+        description="Use this to summarize Jira issues. Input should be a JQL query.",
     ),
 ]
 

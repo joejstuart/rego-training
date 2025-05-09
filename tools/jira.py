@@ -8,6 +8,9 @@ load_dotenv()
 JIRA_URL       = os.getenv("JIRA_URL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 
+if not all([JIRA_URL, JIRA_API_TOKEN]):
+    raise RuntimeError("Missing JIRA_URL or JIRA_API_TOKEN in .env")
+
 # ─── create a Jira client ─────────────────────────────────────────────────────
 jira_client = JIRA(server=JIRA_URL, token_auth=JIRA_API_TOKEN)
 
@@ -35,3 +38,16 @@ def create_jira_issue(project_key: str, summary: str, description: str) -> str:
     new_issue = jira_client.create_issue(fields=issue_dict)
     url = f"{JIRA_URL}/browse/{new_issue.key}"
     return f"Issue {new_issue.key} created: {url}"
+
+def fetch_jira_descriptions(jql: str, max_results: int = 20) -> str:
+    """
+    Search Jira and return a markdown blob of key + description for each issue.
+    """
+    issues = jira_client.search_issues(jql, maxResults=max_results)
+    if not issues:
+        return "No issues found."
+    parts = []
+    for iss in issues:
+        desc = iss.fields.description or "_No description provided._"
+        parts.append(f"### {iss.key}\n\n{desc.strip()}")
+    return "\n\n---\n\n".join(parts)
