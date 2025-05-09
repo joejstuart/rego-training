@@ -8,6 +8,11 @@ Follow these steps to configure and run the agent.
 
 ---
 
+### Models corp documentation
+
+https://gitlab.cee.redhat.com/models-corp/user-documentation
+
+
 ### 1. Set Up Environment Variables
 
 Create a `.env` file in the project root and add the following:
