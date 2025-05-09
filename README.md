@@ -16,6 +16,9 @@ Create a `.env` file in the project root and add the following:
 MODEL_API="https://granite-3-2-8b-instruct--apicast-production.apps.int.stc.ai.prod.us-east-1.aws.paas.redhat.com:443/v1"
 MODEL_ID="/data/granite-3.2-8b-instruct"
 USER_KEY="YOUR-USER_KEY"
+
+JIRA_URL="https://issues.redhat.com"
+JIRA_API_TOKEN="YOUR JIRA PAT"
 ```
 
 #### SSL Cert
@@ -29,4 +32,12 @@ export SSL_CERT_FILE=/tmp/granite-3-2-8b.crt
 
 ```bash
 uv run main.py
+```
+
+#### Example Jira search
+
+The `jira_search` tells the model to use the `search_jira` function.
+
+```
+jira-search project = EC AND assignee = jjstuart-rh AND status = 'In Progress'
 ```
