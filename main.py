@@ -2,6 +2,7 @@ from langchain.chat_models import ChatOpenAI
 from langchain.agents import load_tools, initialize_agent, Tool
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import HumanMessage
+from langchain_experimental.utilities import PythonREPL
 import os
 from dotenv import load_dotenv
 from tools.jira import search_jira, create_jira_issue, fetch_jira_descriptions
@@ -36,6 +37,7 @@ def summarize_jira(jql: str) -> str:
     msg = HumanMessage(content=prompt)
     return llm([msg]).content
 
+# jira tools
 jira_tools = [
     Tool(
         name="jira-search",
@@ -54,7 +56,16 @@ jira_tools = [
     ),
 ]
 
-tools  = load_tools(["llm-math"], llm=llm) + jira_tools
+# python repl tool
+python_repl = PythonREPL()
+repl_tool = Tool(
+    name="python_repl",
+    description="A Python shell. Use this to execute python commands. Input should be a valid python command. If you want to see the output of a value, you should print it out with `print(...)`.",
+    func=python_repl.run,
+)
+
+tools = [repl_tool] + jira_tools
+
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 agent = initialize_agent(
@@ -75,4 +86,3 @@ if __name__ == "__main__":
         if q.lower() in ("exit", "quit"):
             break
         print("AI:", agent.run(q))
-
