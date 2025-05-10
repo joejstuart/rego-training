@@ -3,6 +3,7 @@ from langchain.agents import load_tools, initialize_agent, Tool
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import HumanMessage
 from langchain_experimental.utilities import PythonREPL
+from langchain.utilities import DuckDuckGoSearchAPIWrapper
 import os
 from dotenv import load_dotenv
 from tools.jira import search_jira, create_jira_issue, fetch_jira_descriptions
@@ -100,9 +101,21 @@ repl_tool = Tool(
     func=python_repl.run,
 )
 
-tools = [repl_tool] + jira_tools
+ddg = DuckDuckGoSearchAPIWrapper()
+
+web_search_tool = Tool(
+    name="web-search",
+    func=ddg.run,
+    description=(
+        "Search the web using DuckDuckGo and return the top results. "
+        "Input should be the search query."
+    ),
+)
+
+tools = [repl_tool, web_search_tool] + jira_tools
 
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+
 
 agent = initialize_agent(
     tools=tools,

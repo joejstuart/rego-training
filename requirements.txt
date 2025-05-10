@@ -5,4 +5,4 @@ langchain_community
 numexpr
 jira
 langchain_experimental
-
+duckduckgo-search
