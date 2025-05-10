@@ -6,3 +6,5 @@ numexpr
 jira
 langchain_experimental
 duckduckgo-search
+PyPDF2
+unstructured
