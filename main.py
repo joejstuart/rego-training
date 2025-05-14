@@ -1,15 +1,19 @@
-from langchain.chat_models import ChatOpenAI
+from langchain_community.chat_models import ChatOpenAI
 from langchain.agents import Tool, AgentExecutor, create_react_agent
 from langchain.memory import ConversationBufferMemory
 from langchain.prompts import PromptTemplate
 from langchain.schema import HumanMessage
 from langchain_experimental.utilities import PythonREPL
-from langchain.utilities import DuckDuckGoSearchAPIWrapper
+from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
+from langchain_core._api.deprecation import LangChainDeprecationWarning
 import os
 import re
+import warnings
 import PyPDF2
 from dotenv import load_dotenv
 from tools.jira import search_jira, create_jira_issue, fetch_jira_descriptions
+
+warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
 
 # ─── Load Environment ────────────────────────────────────────────────────────
 load_dotenv()

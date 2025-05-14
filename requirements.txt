@@ -8,3 +8,4 @@ langchain_experimental
 duckduckgo-search
 PyPDF2
 unstructured
+langchain-community
