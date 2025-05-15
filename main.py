@@ -32,13 +32,48 @@ llm = ChatOpenAI(
 # ─── Custom Tools ────────────────────────────────────────────────────────────
 def summarize_jira(jql: str) -> str:
     blob = fetch_jira_descriptions(jql)
-    prompt = (
-        "Below are Jira issue descriptions:\n\n"
-        f"{blob}\n\n"
-        "Please provide a concise summary of the main themes and any common blockers or patterns."
-    )
+    prompt = f"""
+You are a seasoned project manager composing the weekly status update.
+
+Here are this week's Jira issues, separated by status:
+{blob}
+
+Your task: Write a concise narrative summary that MUST follow this exact structure:
+
+1. Start with a brief overview paragraph that captures the main themes of the week's work. This paragraph should be concise and to the point.
+2. Follow with two main sections:
+   a. Completed Work: Summarize the finished work
+   b. Work In Progress: Summarize the ongoing work
+3. For each section:
+   - Use past tense for completed work
+   - Use present/future tense for ongoing work
+   - Include the impact or benefit
+   - Omit issue numbers unless specifically relevant
+   - Focus on telling a cohesive story about the work done
+
+Example format:
+    This week, the team made significant progress in infrastructure improvements and team onboarding. We streamlined our development processes and enhanced our tooling capabilities while making steady progress on ongoing initiatives.
+
+    Completed Work:
+        Our infrastructure improvements focused on release management and deployment flexibility. We decommissioned the v0.4 branch and its associated releases, which streamlined our release process. Additionally, we updated the allowed registry prefixes in konflux-release-data, enabling more flexible deployments. These changes have made our release process more efficient and adaptable.
+
+        The team also completed several tooling enhancements:
+        • Rolled out the new Sealights browser plugin and verified its functionality
+        • Enabled auto-merge for Renovate/Dependabot updates to improve dependency management
+
+    Work In Progress:
+        We are currently focused on implementing the VSA (Verification Summary Attestation) feature. This work includes:
+        • Developing the core functionality for generating VSAs
+        • Investigating storage options in Rekor
+        • Creating configuration parameters for VSA generation
+
+    Overall, the team made significant progress in infrastructure improvements and team onboarding. We streamlined our development processes and enhanced our tooling capabilities while making steady progress on ongoing initiatives.
+
+Now, based on the descriptions above, write your summary following this EXACT structure:
+"""
     msg = HumanMessage(content=prompt)
     return llm([msg]).content
+
 
 def format_jira_ac(arg: str) -> str:
     prompt = f"""
@@ -110,7 +145,13 @@ jira_tools = [
     Tool(
         name="jira-search",
         func=search_jira,
-        description="Search Jira with a JQL query. All strings must be quoted (e.g., status = \"Done\")."
+        description="""Search Jira with a JQL query. Returns a simple list of issue keys and summaries.
+        - Use 'help' as the query to see example queries and JQL syntax tips
+        - Common queries include: weekly status updates, open issues, assigned issues
+        - Use AND, OR, NOT to combine conditions
+        - Use IN for multiple values (e.g., status IN (Open, 'In Progress'))
+        - Use ~ for contains searches (e.g., summary ~ 'search term')
+        - Use >=, <=, >, < for dates (e.g., created >= -7d)"""
     ),
     Tool(
         name="jira-create",
@@ -120,7 +161,9 @@ jira_tools = [
     Tool(
         name="jira-summarize",
         func=summarize_jira,
-        description="Summarize Jira issue descriptions matching a JQL query."
+        description="""Get detailed Jira issue descriptions matching a JQL query. Returns full issue descriptions in markdown format.
+        Use this when you need the complete issue details, not just summaries.
+        Example: jira-summarize project = EC AND status = 'In Progress'"""
     ),
     Tool(
         name="jira-format-ac",
@@ -165,6 +208,22 @@ prompt_template = """You are a helpful AI assistant that uses tools and thinks s
 You can use the following tools:
 {tools}
 
+When using Jira queries (jira-search tool), follow these guidelines:
+1. For weekly status updates, use: project = EC AND issuetype in (Bug, Epic, Feature, Story, Task) AND (status = 'In Progress' or status = Closed ) AND resolved >= -1w
+2. For open issues: project = EC AND status = Open
+3. For assigned issues: project = EC AND assignee = currentUser()
+4. For current sprint: project = EC AND sprint in openSprints()
+5. For high priority: project = EC AND priority = High
+
+JQL Syntax Tips:
+- Use AND, OR, NOT to combine conditions
+- Use IN for multiple values: status IN (Open, 'In Progress')
+- Use = for exact matches
+- Use ~ for contains: summary ~ "search term"
+- Use >=, <=, >, < for dates: created >= -7d
+- Use currentUser() for the current user
+- Use openSprints() for current sprint
+
 Use this format:
 
 Question: the user's question
@@ -181,6 +240,7 @@ Final Answer: your final answer
 Important:
 - Once you write Final Answer, you must stop. Do not continue with more thoughts or actions.
 - Only use tools when necessary. If you already have enough information, skip tool use.
+- When searching Jira, use appropriate JQL queries based on the user's needs.
 
 Begin!
 
