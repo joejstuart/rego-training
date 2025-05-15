@@ -42,6 +42,7 @@ Here are this week's Jira issues, separated by status:
 {blob}
 
 Your task: Write a concise narrative summary that MUST follow this exact structure:
+The tone should be casual and conversational.
 
 1. Start with a brief overview paragraph that captures the main themes of the week's work. This paragraph should be concise and to the point.
 2. Follow with two main sections:
@@ -53,6 +54,7 @@ Your task: Write a concise narrative summary that MUST follow this exact structu
    - Include the impact or benefit
    - Omit issue numbers unless specifically relevant
    - Focus on telling a cohesive story about the work done
+4. Then a conclusion that summarizes the work in each section.
 
 Example format:
     This week, the team made significant progress in infrastructure improvements and team onboarding. We streamlined our development processes and enhanced our tooling capabilities while making steady progress on ongoing initiatives.
@@ -248,7 +250,7 @@ Guidelines for using Jira tools:
 IMPORTANT: For ANY request about status updates, summaries, or progress reports, ALWAYS use summarize_jira, NOT jira-search.
 
 When using Jira queries (JQL), follow these guidelines:
-1. For weekly status updates, use: project = EC AND issuetype IN (Bug, Epic, Feature, Story, Task) AND (status = 'In Progress' OR (status = Closed AND resolved >= -1w))
+1. For weekly status updates, use: project = EC AND issuetype IN (Bug, Story, Task) AND (status = 'In Progress' OR (status = Closed AND resolved >= -1w))
 2. For open issues: project = EC AND status = Open
 3. For assigned issues: project = EC AND assignee = currentUser()
 4. For current sprint: project = EC AND sprint in openSprints()
