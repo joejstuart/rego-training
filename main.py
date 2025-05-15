@@ -31,6 +31,9 @@ llm = ChatOpenAI(
 
 # ─── Custom Tools ────────────────────────────────────────────────────────────
 def summarize_jira(jql: str) -> str:
+    """
+    Summarize the Jira issues matching the JQL query.
+    """
     blob = fetch_jira_descriptions(jql)
     prompt = f"""
 You are a seasoned project manager composing the weekly status update.
@@ -146,8 +149,14 @@ jira_tools = [
         name="jira-search",
         func=search_jira,
         description="""Search Jira with a JQL query. Returns a simple list of issue keys and summaries.
+        ONLY use this tool for:
+        - Looking up specific issues
+        - Getting lists of issues
+        - Checking issue status
+        - Finding assigned issues
+        DO NOT use this for status updates or summaries.
         - Use 'help' as the query to see example queries and JQL syntax tips
-        - Common queries include: weekly status updates, open issues, assigned issues
+        - Common queries include: open issues, assigned issues
         - Use AND, OR, NOT to combine conditions
         - Use IN for multiple values (e.g., status IN (Open, 'In Progress'))
         - Use ~ for contains searches (e.g., summary ~ 'search term')
@@ -161,14 +170,25 @@ jira_tools = [
     Tool(
         name="jira-summarize",
         func=summarize_jira,
-        description="""Get detailed Jira issue descriptions matching a JQL query. Returns full issue descriptions in markdown format.
-        Use this when you need the complete issue details, not just summaries.
-        Example: jira-summarize project = EC AND status = 'In Progress'"""
+        description="""Get a narrative summary of Jira issues matching a JQL query.
+        ALWAYS use this tool for:
+        - Weekly status updates
+        - Project progress summaries
+        - Work period summaries
+        - Any request for a narrative overview of work
+        Example: jira-summarize project = EC AND status = 'In Progress'
+        Returns a formatted narrative summary of the work."""
     ),
     Tool(
         name="jira-format-ac",
         func=format_jira_ac,
-        description="Format raw issue text into a summary and acceptance criteria. Input should be free-form text."
+        description="""This is used to create the text for a single Jira issue only.
+        Format:
+        Summary: <one-line, imperative summary>
+        Acceptance Criteria:
+        - <criterion 1>
+        - <criterion 2>
+        """
     ),
 ]
 
@@ -208,8 +228,27 @@ prompt_template = """You are a helpful AI assistant that uses tools and thinks s
 You can use the following tools:
 {tools}
 
-When using Jira queries (jira-search tool), follow these guidelines:
-1. For weekly status updates, use: project = EC AND issuetype in (Bug, Epic, Feature, Story, Task) AND (status = 'In Progress' or status = Closed ) AND resolved >= -1w
+If you determine you need to use a jira tool, make sure the query is in JQL format.
+
+Guidelines for using Jira tools:
+1. Use jira-search tool when:
+   - Asked for a list of issues
+   - Looking up specific issue details
+   - Need to find issues matching certain criteria
+   - Need to check issue status or assignments
+   Example: "Show me all open issues" or "What issues are assigned to me?"
+
+2. Use summarize_jira tool when:
+   - Asked for status updates
+   - Need a narrative summary of work over a period
+   - Need a high-level overview of project progress
+   - Asked for weekly/monthly summaries
+   Example: "Give me a weekly status update" or "Summarize the project progress"
+
+IMPORTANT: For ANY request about status updates, summaries, or progress reports, ALWAYS use summarize_jira, NOT jira-search.
+
+When using Jira queries (JQL), follow these guidelines:
+1. For weekly status updates, use: project = EC AND issuetype IN (Bug, Epic, Feature, Story, Task) AND (status = 'In Progress' OR (status = Closed AND resolved >= -1w))
 2. For open issues: project = EC AND status = Open
 3. For assigned issues: project = EC AND assignee = currentUser()
 4. For current sprint: project = EC AND sprint in openSprints()
@@ -241,6 +280,7 @@ Important:
 - Once you write Final Answer, you must stop. Do not continue with more thoughts or actions.
 - Only use tools when necessary. If you already have enough information, skip tool use.
 - When searching Jira, use appropriate JQL queries based on the user's needs.
+- REMEMBER: For status updates and summaries, ALWAYS use summarize_jira, not jira-search.
 
 Begin!
 
