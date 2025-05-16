@@ -5,7 +5,7 @@ from jira import JIRA
 
 # Configure logging
 logging.basicConfig(
-    level=logging.ERROR,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -107,7 +107,7 @@ def create_jira_issue(project_key: str, summary: str, description: str) -> str:
     url = f"{JIRA_URL}/browse/{new_issue.key}"
     return f"Issue {new_issue.key} created: {url}"
 
-def fetch_jira_descriptions(jql: str, max_results: int = 30) -> str:
+def fetch_jira_descriptions(jql: str, max_results: int = 50) -> str:
     """
     Search Jira and return a markdown blob of key + description for each issue,
     separated by status (Closed vs In Progress).
@@ -128,6 +128,15 @@ def fetch_jira_descriptions(jql: str, max_results: int = 30) -> str:
     for iss in issues:
         desc = iss.fields.description or "_No description provided._"
         issue_text = f"### {iss.key}\n\n{desc.strip()}"
+        
+        # Add comments if they exist
+        comments = iss.fields.comment.comments
+        if comments:
+            issue_text += "\n\n#### Comments:\n"
+            for comment in comments:
+                author = comment.author.displayName
+                created = comment.created.split('T')[0]  # Get just the date part
+                issue_text += f"\n**{author}** ({created}):\n{comment.body}\n"
         
         if iss.fields.status.name == "Closed":
             closed_issues.append(issue_text)
