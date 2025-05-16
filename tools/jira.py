@@ -128,7 +128,8 @@ def fetch_jira_descriptions(jql: str, max_results: int = 50) -> str:
     
     for iss in issues:
         desc = iss.fields.description or "_No description provided._"
-        issue_text = f"### {iss.key}\n\n{desc.strip()}"
+        priority = iss.fields.priority.name if hasattr(iss.fields, 'priority') else "No Priority"
+        issue_text = f"### {iss.key} (Priority: {priority})\n\n{desc.strip()}"
         
         # Add comments if they exist
         comments = iss.fields.comment.comments
