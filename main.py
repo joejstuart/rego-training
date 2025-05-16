@@ -82,23 +82,53 @@ Now, based on the descriptions above, write your summary following this EXACT st
 
 def format_jira_ac(arg: str) -> str:
     prompt = f"""
-You are an expert Jira issue writer.
-Acronyms:
-- EC = Enterprise Contract
-- VSA = Verification Summary Attestation
+You are an expert Jira issue writer.  
+Acronyms:  
+- EC = Enterprise Contract  
+- VSA = Verification Summary Attestation  
 
-Raw details: {arg.strip()}
+Raw details: {arg.strip()}  
 
-Generate exactly this format from the raw details. The acceptance criteria should be concise and guide the developer on the desired behavior of the feature.
+Task:
+1. Write a one-line, imperative Summary.  
+2. Generate 3-5 concise Acceptance Criteria that each:  
+   • Describe a single, testable outcome  
+   • Are phrased from at least two perspectives (user/developer)  
+   • Are unique—if any two criteria overlap in meaning, include only one  
 
-Summary: <one-line, imperative summary>
+Consider Perspectives:
+- **End user**: clarity and error feedback  
+- **Developer**: API contract and performance  
+
+Format exactly as follows (no extra sections):
+
+Summary: <Imperative, “As a …” phrasing optional>
 
 Acceptance Criteria:
-- <criterion 1>
-- <criterion 2>
+- <Given…When…Then…> or “The system must…” statement  
+- …  
+- …
+
+Tip:
+- Use active voice (“The user can…”).  
+- Prefer Given/When/Then for behavior-driven clarity:  
+  • Given X, when Y, then Z.
+
+Example:
+
+Raw details: I’m a customer and I can’t find products by name when I search.
+
+Output:
+Summary: As a customer, I want to search for products by name.
+
+Acceptance Criteria:
+- Given a valid name, when I search, then matching products appear.  
+- The system must return partial matches with at least three matching characters.  
+- Search results must show name, image, and price. 
 """
     msg = HumanMessage(content=prompt)
     return llm([msg]).content
+
 
 def get_structured_headlines(query: str, count: int = 3) -> str:
     ddg = DuckDuckGoSearchAPIWrapper()
