@@ -124,6 +124,7 @@ def fetch_jira_descriptions(jql: str, max_results: int = 50) -> str:
     # Separate issues by status
     closed_issues = []
     in_progress_issues = []
+    new_issues = []
     
     for iss in issues:
         desc = iss.fields.description or "_No description provided._"
@@ -140,6 +141,8 @@ def fetch_jira_descriptions(jql: str, max_results: int = 50) -> str:
         
         if iss.fields.status.name == "Closed":
             closed_issues.append(issue_text)
+        elif iss.fields.status.name == "New":
+            new_issues.append(issue_text)
         else:
             in_progress_issues.append(issue_text)
     
@@ -155,5 +158,12 @@ def fetch_jira_descriptions(jql: str, max_results: int = 50) -> str:
             result.append("\n---\n")
         result.append("## Work In Progress\n")
         result.extend(in_progress_issues)
+
+    if new_issues:
+        logger.info(f"Found {len(new_issues)} new issues")
+        if result:  # Add separator if we have both sections
+            result.append("\n---\n")
+        result.append("## New\n")
+        result.extend(new_issues)
     
     return "\n\n".join(result)

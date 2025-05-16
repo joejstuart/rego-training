@@ -12,9 +12,15 @@ import warnings
 import PyPDF2
 from dotenv import load_dotenv
 from tools.jira import search_jira, create_jira_issue, fetch_jira_descriptions
-from prompts.jira import FULL_WEEKLY_SUMMARY, COMPLETED_ONLY_SUMMARY, WIP_ONLY_SUMMARY, ACCEPTANCE_CRITERIA_PROMPT
-
+from prompts.jira import FULL_WEEKLY_SUMMARY, COMPLETED_ONLY_SUMMARY, WIP_ONLY_SUMMARY, ACCEPTANCE_CRITERIA_PROMPT, SPRINT_SUMMARY_PROMPT
+import logging
 warnings.filterwarnings("ignore", category=LangChainDeprecationWarning)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # ─── Load Environment ────────────────────────────────────────────────────────
 load_dotenv()
@@ -40,8 +46,11 @@ def summarize_jira(jql: str) -> str:
 
     has_completed = "## Completed Work" in blob
     has_wip       = "## Work In Progress" in blob
+    has_new       = "## New" in blob
 
-    if has_completed and has_wip:
+    if has_completed and has_wip and has_new:
+        prompt = SPRINT_SUMMARY_PROMPT.format_prompt(jira_blob=blob)
+    elif has_completed and has_wip:
         prompt = FULL_WEEKLY_SUMMARY.format_prompt(jira_blob=blob)
     elif has_completed:
         prompt = COMPLETED_ONLY_SUMMARY.format_prompt(jira_blob=blob)
@@ -142,6 +151,7 @@ jira_tools = [
         - Project progress summaries
         - Work period summaries
         - Any request for a narrative overview of work
+        - Any request for a sprint summary
         Example: jira-summarize project = EC AND status = 'In Progress'
         Returns a formatted narrative summary of the work."""
     ),
@@ -205,6 +215,7 @@ When using Jira queries (JQL), follow these guidelines:
 3. For assigned issues: project = EC AND assignee = currentUser()
 4. For current sprint: project = EC AND sprint in openSprints()
 5. For high priority: project = EC AND priority = High
+6. For sprint summaries: project = EC AND issuetype IN (Bug, Story, Task) AND sprint in openSprints()
 
 Use this format:
 
