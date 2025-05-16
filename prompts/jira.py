@@ -24,32 +24,31 @@ The tone should be casual and conversational.
    - Omit individual issue numbers unless specifically relevant
    - Provide a high-level summary of each theme rather than listing individual items
    - ALWAYS include issue numbers for Critical, Blocker, or Major priority items
+   - Use plain text without any asterisks or markdown formatting
 5. Then a conclusion that summarizes the work in each section.
 
 Example format:
     This sprint, we focused on hardening our release pipeline and kicking off the VSA feature. We completed core CI/CD improvements, made good progress on service integration, and still have a few backlog items to tackle.
 
     High Priority Items:
-        - [PROJ-123] Critical security vulnerability in release pipeline - Currently being addressed
-        - [PROJ-456] Blocker issue with VSA generation - Blocked by external dependency
+        - PROJ-123: Critical security vulnerability in release pipeline - Currently being addressed
+        - PROJ-456: Blocker issue with VSA generation - Blocked by external dependency
 
     Completed Work:
         Our infrastructure improvements focused on release management and deployment flexibility. We decommissioned the v0.4 branch and its associated releases, which streamlined our release process. Additionally, we updated the allowed registry prefixes in konflux-release-data, enabling more flexible deployments. These changes have made our release process more efficient and adaptable.
-
-        The team also completed several tooling enhancements:
-        • Rolled out the new Sealights browser plugin and verified its functionality
-        • Enabled auto-merge for Renovate/Dependabot updates to improve dependency management
+        - Rolled out the new Sealights browser plugin and verified its functionality
+        - Enabled auto-merge for Renovate/Dependabot updates to improve dependency management
 
     Work In Progress:
         We are currently focused on implementing the VSA (Verification Summary Attestation) feature. This work includes:
-        • Developing the core functionality for generating VSAs
-        • Investigating storage options in Rekor
-        • Creating configuration parameters for VSA generation
+        - Developing the core functionality for generating VSAs
+        - Investigating storage options in Rekor
+        - Creating configuration parameters for VSA generation
 
     New:
         We have two main areas of new work planned:
-        1. Policy and Compliance Enhancements: Several new policy checks and compliance features are planned, including hermetic pre-build script verification and policy compliance for in-git script tasks.
-        2. Infrastructure Modernization: We're planning to upgrade our Go version and replace Cosign with Sigstore in our CLI tools, which will improve our security posture and maintainability.
+        - Policy and Compliance Enhancements: Several new policy checks and compliance features are planned, including hermetic pre-build script verification and policy compliance for in-git script tasks.
+        - Infrastructure Modernization: We're planning to upgrade our Go version and replace Cosign with Sigstore in our CLI tools, which will improve our security posture and maintainability.
 
     Overall, the team shipped critical release enhancements, advanced the VSA groundwork, and has clear next steps to finish the sprint.
 
@@ -57,6 +56,7 @@ Now, based on the blob above, write your sprint summary following that structure
 1. Group related items into themes and provide high-level summaries rather than listing individual issues
 2. ALWAYS include a "High Priority Items" section if there are any Critical, Blocker, or Major priority issues
 3. For high priority issues, include their issue numbers and explain their impact
+4. Use plain text without any asterisks or markdown formatting
 """,
     input_variables=["jira_blob"],
 )
@@ -78,6 +78,7 @@ Guidelines:
     - Provide a high-level summary of each theme rather than listing individual items
     - ALWAYS highlight any issues marked as Critical, Blocker, or Major priority
     - For high priority issues, include their issue numbers and explain their impact
+    - Do not use asterisks (*) for formatting - use plain text only
 
 Structure you should follow:
     The EC team had a productive week. We completed several infrastructure improvements and tooling enhancements and have key items in progress.
@@ -107,6 +108,7 @@ Now, based on the descriptions above, write your summary following this EXACT st
 1. Group related items into themes and provide high-level summaries rather than listing individual issues
 2. ALWAYS include a "High Priority Items" section if there are any Critical, Blocker, or Major priority issues
 3. For high priority issues, include their issue numbers and explain their impact
+4. Use plain text without any asterisks or markdown formatting
 """,
     input_variables=["jira_blob"],
 )

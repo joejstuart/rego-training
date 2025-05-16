@@ -161,7 +161,6 @@ def fetch_jira_descriptions(jql: str, max_results: int = 50) -> str:
         result.extend(in_progress_issues)
 
     if new_issues:
-        logger.info(f"Found {len(new_issues)} new issues")
         if result:  # Add separator if we have both sections
             result.append("\n---\n")
         result.append("## New\n")
