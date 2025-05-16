@@ -255,27 +255,38 @@ pdf_tool = Tool(
 tools = [repl_tool, web_search_tool, news_search_tool, pdf_tool] + jira_tools
 
 # ─── ReAct Prompt Template ───────────────────────────────────────────────────
+
+# removed from prompt. might be too much.
+# Guidelines for using Jira tools:
+# 1. Use jira-search tool when:
+#    - Asked for a list of issues
+#    - Looking up specific issue details
+#    - Need to find issues matching certain criteria
+#    - Need to check issue status or assignments
+#    Example: "Show me all open issues" or "What issues are assigned to me?"
+
+# 2. Use summarize_jira tool when:
+#    - Asked for status updates
+#    - Need a narrative summary of work over a period
+#    - Need a high-level overview of project progress
+#    - Asked for weekly/monthly summaries
+#    Example: "Give me a weekly status update" or "Summarize the project progress"
+
+# JQL Syntax Tips:
+# - Use AND, OR, NOT to combine conditions
+# - Use IN for multiple values: status IN (Open, 'In Progress')
+# - Use = for exact matches
+# - Use ~ for contains: summary ~ "search term"
+# - Use >=, <=, >, < for dates: created >= -7d
+# - Use currentUser() for the current user
+# - Use openSprints() for current sprint
+
 prompt_template = """You are a helpful AI assistant that uses tools and thinks step-by-step.
 
 You can use the following tools:
 {tools}
 
 If you determine you need to use a jira tool, make sure the query is in JQL format.
-
-Guidelines for using Jira tools:
-1. Use jira-search tool when:
-   - Asked for a list of issues
-   - Looking up specific issue details
-   - Need to find issues matching certain criteria
-   - Need to check issue status or assignments
-   Example: "Show me all open issues" or "What issues are assigned to me?"
-
-2. Use summarize_jira tool when:
-   - Asked for status updates
-   - Need a narrative summary of work over a period
-   - Need a high-level overview of project progress
-   - Asked for weekly/monthly summaries
-   Example: "Give me a weekly status update" or "Summarize the project progress"
 
 IMPORTANT: For ANY request about status updates, summaries, or progress reports, ALWAYS use summarize_jira, NOT jira-search.
 
@@ -285,15 +296,6 @@ When using Jira queries (JQL), follow these guidelines:
 3. For assigned issues: project = EC AND assignee = currentUser()
 4. For current sprint: project = EC AND sprint in openSprints()
 5. For high priority: project = EC AND priority = High
-
-JQL Syntax Tips:
-- Use AND, OR, NOT to combine conditions
-- Use IN for multiple values: status IN (Open, 'In Progress')
-- Use = for exact matches
-- Use ~ for contains: summary ~ "search term"
-- Use >=, <=, >, < for dates: created >= -7d
-- Use currentUser() for the current user
-- Use openSprints() for current sprint
 
 Use this format:
 
