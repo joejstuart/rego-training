@@ -29,6 +29,27 @@ llm = ChatOpenAI(
     temperature=0.7,
 )
 
+# # at module scope
+# WEEKLY_SUMMARY_TEMPLATE = PromptTemplate(
+#     template="""
+# You are a seasoned project manager composing the weekly status update.
+# Here are this week's Jira issues, separated by status:
+# {jira_blob}
+
+# Write a concise update in three parts:
+# 1. Overview paragraph (concise themes)
+# 2. Completed Work (past tense bullets)
+# 3. Work In Progress (present/future tense bullets)
+
+# Omit issue numbers, focus on impact. Stop after the narrative.
+# """,
+#     input_variables=["jira_blob"],
+# )
+
+# def summarize_jira(jql: str) -> str:
+#     blob = fetch_jira_descriptions(jql)
+#     return llm(WEEKLY_SUMMARY_TEMPLATE.format_prompt(jira_blob=blob).to_messages()).content
+
 # ─── Custom Tools ────────────────────────────────────────────────────────────
 def summarize_jira(jql: str) -> str:
     """
