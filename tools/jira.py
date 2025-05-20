@@ -125,6 +125,7 @@ def fetch_jira_descriptions(jql: str, max_results: int = 50) -> str:
     closed_issues = []
     in_progress_issues = []
     new_issues = []
+    reviewed_issues = []
     
     for iss in issues:
         desc = iss.fields.description or "_No description provided._"
@@ -144,6 +145,8 @@ def fetch_jira_descriptions(jql: str, max_results: int = 50) -> str:
             closed_issues.append(issue_text)
         elif iss.fields.status.name == "New":
             new_issues.append(issue_text)
+        elif iss.fields.status.name == "Review":
+            reviewed_issues.append(issue_text)
         else:
             in_progress_issues.append(issue_text)
     
@@ -165,5 +168,11 @@ def fetch_jira_descriptions(jql: str, max_results: int = 50) -> str:
             result.append("\n---\n")
         result.append("## New\n")
         result.extend(new_issues)
+
+    if reviewed_issues:
+        if result:  # Add separator if we have both sections
+            result.append("\n---\n")
+        result.append("## In Review\n")
+        result.extend(reviewed_issues)
     
     return "\n\n".join(result)
