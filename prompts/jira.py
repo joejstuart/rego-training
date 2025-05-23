@@ -31,38 +31,36 @@ Here are this week's Jira issues, separated by status:
 Your task: Write a concise narrative summary that MUST follow the guidelines and the exact structure below:
 
 Guidelines:
+    - The status must start with an overview of ALL issues with a priority of Critical, Blocker, or Major
     - Use past tense for completed work
     - Use present/future tense for ongoing work
     - Focus on the overall impact and purpose of each theme
     - Omit individual issue numbers unless specifically relevant
     - Provide a high-level summary of each theme rather than listing individual items
-    - ALWAYS highlight any issues marked as Critical, Blocker, or Major priority
+    - ALWAYS include ALL issues marked as Critical, Blocker
+    - ALWAYS include ALL issues marked as Bug
     - For high priority issues, include their issue numbers and explain their impact
     - Do not use asterisks (*) for formatting - use plain text only
 
 Structure you should follow:
-    The EC team had a productive week. We completed several infrastructure improvements and tooling enhancements and have key items in progress.
+    [The status should start with an overview of ALL issues with a priority of Critical, Blocker, or Major]
 
     High Priority Items:
-        - [ALWAYS include this section if there are any Critical, Blocker, or Major priority issues]
-        - [List and explain any high priority issues, including their impact and current status]
+        - [ALWAYS include this section if there are any issues marked as Critical or Blocker as their status]
+        - [List and explain ALL high priority issues, including their impact and current status]
+
+    Bug Fixes:
+        - [List and explain ALL issues of type Bug]
+        - [Issues can be in any status]
 
     Completed Work:
-        Our infrastructure improvements focused on release management and deployment flexibility:
-        - We decommissioned the v0.4 branch and its associated releases, which streamlined our release process. 
-        - Additionally, we updated the allowed registry prefixes in konflux-release-data, enabling more flexible deployments.
-
-        The team also completed several tooling enhancements:
-        - Rolled out the new Sealights browser plugin and verified its functionality
-        - Enabled auto-merge for Renovate/Dependabot updates to improve dependency management
+        [Give an overview of the completed work]
+        - [Summarize the completed work into key themes]
 
     Work In Progress:
-        We are currently focused on implementing the VSA (Verification Summary Attestation) feature. This work includes:
-        - Developing the core functionality for generating VSAs
-        - Investigating storage options in Rekor
-        - Creating configuration parameters for VSA generation
+        [Give an overview of the ongoing work]
+        - [Summarize the ongoing work into key themes]
 
-    Overall, the team made significant progress in infrastructure improvements and team onboarding. We streamlined our development processes and enhanced our tooling capabilities while making steady progress on ongoing initiatives.
 
 Now, based on the descriptions above, write your summary following this EXACT structure. Remember to:
 1. Group related items into themes and provide high-level summaries rather than listing individual issues
