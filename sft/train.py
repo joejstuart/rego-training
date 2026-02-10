@@ -42,7 +42,7 @@ DEFAULTS = {
     "model": "Qwen/Qwen3-4B",
     "dataset": str(Path(__file__).resolve().parent / "phase4_dataset" / "output" / "rego_sft.jsonl"),
     "output_dir": str(Path(__file__).resolve().parent / "output" / "rego-expert"),
-    "max_seq_length": 2048,       # covers p99=1038, p100=1126
+    "max_seq_length": 2048,       # covers p99≈1853, p100≈1995 (includes schema in system prompt)
     "batch_size": 4,              # per-device
     "grad_accum": 4,              # effective batch size = 16
     "epochs": 3,                  # small dataset → multiple passes
@@ -51,7 +51,7 @@ DEFAULTS = {
     "warmup_ratio": 0.1,
     "weight_decay": 0.01,
     "max_grad_norm": 1.0,
-    "eval_split": 0.05,           # 5% holdout for eval (~69 examples)
+    "eval_split": 0.05,           # 5% holdout for eval (~97 examples)
     "seed": 42,
     # LoRA defaults
     "lora_r": 16,
