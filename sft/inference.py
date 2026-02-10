@@ -102,6 +102,9 @@ def parse_args() -> argparse.Namespace:
                     help="Model path: LoRA adapter dir, merged model dir, or HF model name.")
     p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B",
                     help="Base model (only needed if --model points to a LoRA adapter).")
+    p.add_argument("--sft-model", type=str, default=None,
+                    help="SFT LoRA adapter to merge before applying --model LoRA. "
+                         "Required when --model is a GRPO adapter (trained on top of SFT).")
 
     # Input
     p.add_argument("--prompt", type=str, default=None,
@@ -149,14 +152,27 @@ def load_model(args: argparse.Namespace):
         print(f"Detected LoRA adapter at {args.model}")
         print(f"Loading base model {args.base_model}...")
         from peft import PeftModel
-        base_model = AutoModelForCausalLM.from_pretrained(
+        model = AutoModelForCausalLM.from_pretrained(
             args.base_model,
             torch_dtype=torch.bfloat16,
             device_map="auto",
             trust_remote_code=True,
         )
+
+        # If an SFT adapter is specified, merge it first (needed for GRPO adapters
+        # which were trained on top of the SFT-merged weights, not the raw base)
+        if args.sft_model:
+            sft_path = Path(args.sft_model)
+            if (sft_path / "adapter_config.json").exists():
+                print(f"  Merging SFT LoRA from {args.sft_model}...")
+                model = PeftModel.from_pretrained(model, args.sft_model)
+                model = model.merge_and_unload()
+                print(f"  SFT LoRA merged into base weights.")
+            else:
+                print(f"  WARNING: --sft-model {args.sft_model} has no adapter_config.json, skipping.")
+
         print(f"  Applying LoRA adapter from {args.model}...")
-        model = PeftModel.from_pretrained(base_model, args.model)
+        model = PeftModel.from_pretrained(model, args.model)
         print(f"  LoRA adapter loaded and applied.")
     else:
         print(f"Loading model from {args.model}...")

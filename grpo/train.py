@@ -454,9 +454,9 @@ def main() -> None:
     trainer.train()
 
     # ------------------------------------------------------------------
-    # Save
+    # Save LoRA adapter
     # ------------------------------------------------------------------
-    print(f"\nSaving GRPO model to {args.output_dir}...")
+    print(f"\nSaving GRPO LoRA adapter to {args.output_dir}...")
     if args.no_unsloth:
         trainer.save_model()
         tokenizer.save_pretrained(args.output_dir)
@@ -472,6 +472,23 @@ def main() -> None:
     print(f"  Config saved to {config_path}")
 
     # ------------------------------------------------------------------
+    # Save fully merged model (base + SFT + GRPO — ready for inference)
+    # ------------------------------------------------------------------
+    merged_dir = Path(args.output_dir) / "merged"
+    print(f"\nSaving fully merged model to {merged_dir}...")
+    try:
+        # The trainer's model already has GRPO LoRA applied; merge it
+        merged_model = trainer.model.merge_and_unload()
+        merged_model.save_pretrained(str(merged_dir))
+        tokenizer.save_pretrained(str(merged_dir))
+        print(f"  Merged model saved — use directly with:")
+        print(f"    python sft/inference.py --model {merged_dir}")
+    except Exception as e:
+        print(f"  WARNING: Could not save merged model: {e}")
+        print(f"  You can still use the LoRA adapter with:")
+        print(f"    python sft/inference.py --model {args.output_dir} --sft-model {args.sft_model}")
+
+    # ------------------------------------------------------------------
     # Training summary
     # ------------------------------------------------------------------
     step_logger.print_final_summary()
@@ -479,8 +496,11 @@ def main() -> None:
     print("Done! ✓")
     print(f"\n  Pipeline complete:")
     print(f"    1. SFT model:  {args.sft_model}")
-    print(f"    2. GRPO model: {args.output_dir}")
-    print(f"    3. Step log:   {step_logger.log_file}")
+    print(f"    2. GRPO LoRA:  {args.output_dir}")
+    print(f"    3. Merged:     {merged_dir}")
+    print(f"    4. Step log:   {step_logger.log_file}")
+    print(f"\n  Inference:")
+    print(f"    python sft/inference.py --model {merged_dir}")
 
 
 if __name__ == "__main__":
