@@ -1,0 +1,10 @@
+{
+  "task_id": "all_subjects_have_digest",
+  "tier": 2,
+  "package_name": "all_subjects_have_digest",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "all_subjects_have_digest_test.rego:\ndata.all_subjects_have_digest_test.test_all_subjects_have_digest_invalid: PASS (676.125\u00b5s)\ndata.all_subjects_have_digest_test.test_all_subjects_have_digest_valid: PASS (719.125\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

@@ -1,0 +1,10 @@
+{
+  "task_id": "build_tasks_have_image_digest_result",
+  "tier": 2,
+  "package_name": "build_tasks_have_image_digest_result",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "build_tasks_have_image_digest_result_test.rego:\ndata.build_tasks_have_image_digest_result_test.test_build_tasks_have_image_digest_result_invalid: PASS (562.708\u00b5s)\ndata.build_tasks_have_image_digest_result_test.test_build_tasks_have_image_digest_result_valid: PASS (583.958\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

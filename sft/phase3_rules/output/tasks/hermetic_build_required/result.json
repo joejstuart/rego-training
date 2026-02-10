@@ -1,0 +1,10 @@
+{
+  "task_id": "hermetic_build_required",
+  "tier": 3,
+  "package_name": "hermetic_build_required",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "hermetic_build_required_test.rego:\ndata.hermetic_build_required_test.test_hermetic_build_required_valid: PASS (230.25\u00b5s)\ndata.hermetic_build_required_test.test_hermetic_build_required_invalid: PASS (317.833\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

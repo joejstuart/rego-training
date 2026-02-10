@@ -1,0 +1,10 @@
+{
+  "task_id": "all_tasks_have_name",
+  "tier": 2,
+  "package_name": "all_tasks_have_name",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "all_tasks_have_name_test.rego:\ndata.all_tasks_have_name_test.test_all_tasks_have_name_valid: PASS (224.292\u00b5s)\ndata.all_tasks_have_name_test.test_all_tasks_have_name_invalid: PASS (243\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

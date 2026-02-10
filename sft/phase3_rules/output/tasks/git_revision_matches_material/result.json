@@ -1,0 +1,10 @@
+{
+  "task_id": "git_revision_matches_material",
+  "tier": 3,
+  "package_name": "git_revision_matches_material",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "git_revision_matches_material_test.rego:\ndata.git_revision_matches_material_test.test_git_revision_matches_material_valid: PASS (442.625\u00b5s)\ndata.git_revision_matches_material_test.test_git_revision_matches_material_invalid: PASS (765.083\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

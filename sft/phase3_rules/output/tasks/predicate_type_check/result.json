@@ -1,0 +1,10 @@
+{
+  "task_id": "predicate_type_check",
+  "tier": 1,
+  "package_name": "predicate_type_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "predicate_type_check_test.rego:\ndata.predicate_type_check_test.test_predicate_type_check_valid: PASS (177.166\u00b5s)\ndata.predicate_type_check_test.test_predicate_type_check_invalid: PASS (195.959\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

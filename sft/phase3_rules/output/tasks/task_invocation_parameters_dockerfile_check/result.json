@@ -1,0 +1,10 @@
+{
+  "task_id": "task_invocation_parameters_dockerfile_check",
+  "tier": 1,
+  "package_name": "task_invocation_parameters_dockerfile_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "task_invocation_parameters_dockerfile_check_test.rego:\ndata.task_invocation_parameters_dockerfile_check_test.test_task_invocation_parameters_dockerfile_check_valid: PASS (301.125\u00b5s)\ndata.task_invocation_parameters_dockerfile_check_test.test_task_invocation_parameters_dockerfile_check_invalid: PASS (323.834\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

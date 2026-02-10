@@ -1,0 +1,10 @@
+{
+  "task_id": "predicate_builder_id_check",
+  "tier": 1,
+  "package_name": "predicate_builder_id_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "predicate_builder_id_check_test.rego:\ndata.predicate_builder_id_check_test.test_predicate_builder_id_check_invalid: PASS (626.583\u00b5s)\ndata.predicate_builder_id_check_test.test_predicate_builder_id_check_valid: PASS (706.459\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

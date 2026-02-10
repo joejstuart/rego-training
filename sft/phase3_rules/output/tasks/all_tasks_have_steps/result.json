@@ -1,0 +1,10 @@
+{
+  "task_id": "all_tasks_have_steps",
+  "tier": 2,
+  "package_name": "all_tasks_have_steps",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "all_tasks_have_steps_test.rego:\ndata.all_tasks_have_steps_test.test_all_tasks_have_steps_valid: PASS (244.5\u00b5s)\ndata.all_tasks_have_steps_test.test_all_tasks_have_steps_invalid: PASS (264.833\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

@@ -1,0 +1,9 @@
+{
+  "total": 60,
+  "stats": {
+    "pass": 60,
+    "fail": 0,
+    "skipped": 0
+  },
+  "method": "local_templates"
+}

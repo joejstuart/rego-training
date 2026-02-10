@@ -1,0 +1,10 @@
+{
+  "task_id": "task_ref_resolver_check",
+  "tier": 1,
+  "package_name": "task_ref_resolver_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "task_ref_resolver_check_test.rego:\ndata.task_ref_resolver_check_test.test_task_ref_resolver_check_invalid: PASS (601.958\u00b5s)\ndata.task_ref_resolver_check_test.test_task_ref_resolver_check_valid: PASS (676.125\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

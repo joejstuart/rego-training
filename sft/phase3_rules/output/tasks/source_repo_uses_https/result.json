@@ -1,0 +1,10 @@
+{
+  "task_id": "source_repo_uses_https",
+  "tier": 3,
+  "package_name": "source_repo_uses_https",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "source_repo_uses_https_test.rego:\ndata.source_repo_uses_https_test.test_source_repo_uses_https_valid: PASS (590.958\u00b5s)\ndata.source_repo_uses_https_test.test_source_repo_uses_https_invalid: PASS (673.542\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

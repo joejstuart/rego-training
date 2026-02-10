@@ -1,0 +1,10 @@
+{
+  "task_id": "task_ref_params_name_check",
+  "tier": 1,
+  "package_name": "task_ref_params_name_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "task_ref_params_name_check_test.rego:\ndata.task_ref_params_name_check_test.test_task_ref_params_name_check_valid: PASS (1.061667ms)\ndata.task_ref_params_name_check_test.test_task_ref_params_name_check_invalid: PASS (1.140083ms)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

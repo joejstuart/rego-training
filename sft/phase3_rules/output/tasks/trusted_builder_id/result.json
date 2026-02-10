@@ -1,0 +1,10 @@
+{
+  "task_id": "trusted_builder_id",
+  "tier": 3,
+  "package_name": "trusted_builder_id",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "trusted_builder_id_test.rego:\ndata.trusted_builder_id_test.test_trusted_builder_id_invalid: PASS (261.083\u00b5s)\ndata.trusted_builder_id_test.test_trusted_builder_id_valid: PASS (284.917\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

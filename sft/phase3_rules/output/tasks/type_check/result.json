@@ -1,0 +1,10 @@
+{
+  "task_id": "type_check",
+  "tier": 1,
+  "package_name": "type_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "type_check_test.rego:\ndata.type_check_test.test_type_check_valid: PASS (209.875\u00b5s)\ndata.type_check_test.test_type_check_invalid: PASS (660.334\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

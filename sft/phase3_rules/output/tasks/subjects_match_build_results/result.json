@@ -1,0 +1,10 @@
+{
+  "task_id": "subjects_match_build_results",
+  "tier": 3,
+  "package_name": "subjects_match_build_results",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "subjects_match_build_results_test.rego:\ndata.subjects_match_build_results_test.test_subjects_match_build_results_valid: PASS (434.542\u00b5s)\ndata.subjects_match_build_results_test.test_subjects_match_build_results_invalid: PASS (497.542\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

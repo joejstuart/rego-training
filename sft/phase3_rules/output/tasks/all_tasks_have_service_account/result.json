@@ -1,0 +1,10 @@
+{
+  "task_id": "all_tasks_have_service_account",
+  "tier": 2,
+  "package_name": "all_tasks_have_service_account",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "all_tasks_have_service_account_test.rego:\ndata.all_tasks_have_service_account_test.test_all_tasks_have_service_account_valid: PASS (193.542\u00b5s)\ndata.all_tasks_have_service_account_test.test_all_tasks_have_service_account_invalid: PASS (221.584\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

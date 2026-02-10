@@ -1,0 +1,10 @@
+{
+  "task_id": "task_result_value_check",
+  "tier": 1,
+  "package_name": "task_result_value_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "task_result_value_check_test.rego:\ndata.task_result_value_check_test.test_task_result_value_check_valid: PASS (546.667\u00b5s)\ndata.task_result_value_check_test.test_task_result_value_check_invalid: PASS (638.458\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

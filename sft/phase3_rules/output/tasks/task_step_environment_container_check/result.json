@@ -1,0 +1,10 @@
+{
+  "task_id": "task_step_environment_container_check",
+  "tier": 1,
+  "package_name": "task_step_environment_container_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "task_step_environment_container_check_test.rego:\ndata.task_step_environment_container_check_test.test_task_step_environment_container_check_valid: PASS (208.958\u00b5s)\ndata.task_step_environment_container_check_test.test_task_step_environment_container_check_invalid: PASS (262.416\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

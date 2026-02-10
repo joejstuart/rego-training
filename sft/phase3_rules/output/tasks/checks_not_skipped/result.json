@@ -1,0 +1,10 @@
+{
+  "task_id": "checks_not_skipped",
+  "tier": 3,
+  "package_name": "checks_not_skipped",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "checks_not_skipped_test.rego:\ndata.checks_not_skipped_test.test_checks_not_skipped_valid: PASS (334.167\u00b5s)\ndata.checks_not_skipped_test.test_checks_not_skipped_invalid: PASS (337.459\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

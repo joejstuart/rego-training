@@ -1,0 +1,10 @@
+{
+  "task_id": "all_tasks_have_timestamps",
+  "tier": 2,
+  "package_name": "all_tasks_have_timestamps",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "all_tasks_have_timestamps_test.rego:\ndata.all_tasks_have_timestamps_test.test_all_tasks_have_timestamps_valid: PASS (297.291\u00b5s)\ndata.all_tasks_have_timestamps_test.test_all_tasks_have_timestamps_invalid: PASS (363.375\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

@@ -1,0 +1,10 @@
+{
+  "task_id": "task_service_account_name_check",
+  "tier": 1,
+  "package_name": "task_service_account_name_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "task_service_account_name_check_test.rego:\ndata.task_service_account_name_check_test.test_task_service_account_name_check_invalid: PASS (439.333\u00b5s)\ndata.task_service_account_name_check_test.test_task_service_account_name_check_valid: PASS (518.875\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

@@ -1,0 +1,10 @@
+{
+  "task_id": "predicate_materials_check",
+  "tier": 1,
+  "package_name": "predicate_materials_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "predicate_materials_check_test.rego:\ndata.predicate_materials_check_test.test_predicate_materials_check_invalid: PASS (638.625\u00b5s)\ndata.predicate_materials_check_test.test_predicate_materials_check_valid: PASS (529.583\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

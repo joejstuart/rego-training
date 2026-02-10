@@ -1,0 +1,10 @@
+{
+  "task_id": "all_task_refs_have_required_params",
+  "tier": 2,
+  "package_name": "all_task_refs_have_required_params",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "all_task_refs_have_required_params_test.rego:\ndata.all_task_refs_have_required_params_test.test_all_task_refs_have_required_params_valid: PASS (580.791\u00b5s)\ndata.all_task_refs_have_required_params_test.test_all_task_refs_have_required_params_invalid: PASS (792.25\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

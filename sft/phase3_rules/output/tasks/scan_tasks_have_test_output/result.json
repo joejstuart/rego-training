@@ -1,0 +1,10 @@
+{
+  "task_id": "scan_tasks_have_test_output",
+  "tier": 3,
+  "package_name": "scan_tasks_have_test_output",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "scan_tasks_have_test_output_test.rego:\ndata.scan_tasks_have_test_output_test.test_scan_tasks_have_test_output_valid: PASS (368.417\u00b5s)\ndata.scan_tasks_have_test_output_test.test_scan_tasks_have_test_output_invalid: PASS (379.417\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

@@ -1,0 +1,10 @@
+{
+  "task_id": "predicate_metadata_build_started_on_check",
+  "tier": 1,
+  "package_name": "predicate_metadata_build_started_on_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "predicate_metadata_build_started_on_check_test.rego:\ndata.predicate_metadata_build_started_on_check_test.test_predicate_metadata_build_started_on_check_valid: PASS (592.125\u00b5s)\ndata.predicate_metadata_build_started_on_check_test.test_predicate_metadata_build_started_on_check_invalid: PASS (624.25\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

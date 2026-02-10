@@ -1,0 +1,10 @@
+{
+  "task_id": "build_timestamps_chronological",
+  "tier": 3,
+  "package_name": "build_timestamps_chronological",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "build_timestamps_chronological_test.rego:\ndata.build_timestamps_chronological_test.test_build_timestamps_chronological_valid: PASS (576.875\u00b5s)\ndata.build_timestamps_chronological_test.test_build_timestamps_chronological_invalid: PASS (575.5\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

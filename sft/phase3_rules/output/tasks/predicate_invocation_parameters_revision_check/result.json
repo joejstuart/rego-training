@@ -1,0 +1,10 @@
+{
+  "task_id": "predicate_invocation_parameters_revision_check",
+  "tier": 1,
+  "package_name": "predicate_invocation_parameters_revision_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "predicate_invocation_parameters_revision_check_test.rego:\ndata.predicate_invocation_parameters_revision_check_test.test_predicate_invocation_parameters_revision_check_invalid: PASS (239.041\u00b5s)\ndata.predicate_invocation_parameters_revision_check_test.test_predicate_invocation_parameters_revision_check_valid: PASS (246.291\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

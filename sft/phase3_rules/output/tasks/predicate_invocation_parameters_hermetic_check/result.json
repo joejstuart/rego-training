@@ -1,0 +1,10 @@
+{
+  "task_id": "predicate_invocation_parameters_hermetic_check",
+  "tier": 1,
+  "package_name": "predicate_invocation_parameters_hermetic_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "predicate_invocation_parameters_hermetic_check_test.rego:\ndata.predicate_invocation_parameters_hermetic_check_test.test_predicate_invocation_parameters_hermetic_check_valid: PASS (385.125\u00b5s)\ndata.predicate_invocation_parameters_hermetic_check_test.test_predicate_invocation_parameters_hermetic_check_invalid: PASS (512.416\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

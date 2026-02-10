@@ -1,0 +1,10 @@
+{
+  "task_id": "tls_verify_enabled",
+  "tier": 3,
+  "package_name": "tls_verify_enabled",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "tls_verify_enabled_test.rego:\ndata.tls_verify_enabled_test.test_tls_verify_enabled_valid: PASS (222.209\u00b5s)\ndata.tls_verify_enabled_test.test_tls_verify_enabled_invalid: PASS (293.791\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

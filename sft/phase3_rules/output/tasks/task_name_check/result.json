@@ -1,0 +1,10 @@
+{
+  "task_id": "task_name_check",
+  "tier": 1,
+  "package_name": "task_name_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "task_name_check_test.rego:\ndata.task_name_check_test.test_task_name_check_valid: PASS (789.875\u00b5s)\ndata.task_name_check_test.test_task_name_check_invalid: PASS (826.666\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

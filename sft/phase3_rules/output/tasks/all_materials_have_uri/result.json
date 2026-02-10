@@ -1,0 +1,10 @@
+{
+  "task_id": "all_materials_have_uri",
+  "tier": 2,
+  "package_name": "all_materials_have_uri",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "all_materials_have_uri_test.rego:\ndata.all_materials_have_uri_test.test_all_materials_have_uri_valid: PASS (717.666\u00b5s)\ndata.all_materials_have_uri_test.test_all_materials_have_uri_invalid: PASS (878.416\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

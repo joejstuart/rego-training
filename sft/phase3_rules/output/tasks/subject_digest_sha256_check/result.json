@@ -1,0 +1,10 @@
+{
+  "task_id": "subject_digest_sha256_check",
+  "tier": 1,
+  "package_name": "subject_digest_sha256_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "subject_digest_sha256_check_test.rego:\ndata.subject_digest_sha256_check_test.test_subject_digest_sha256_check_invalid: PASS (568.542\u00b5s)\ndata.subject_digest_sha256_check_test.test_subject_digest_sha256_check_valid: PASS (563.916\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

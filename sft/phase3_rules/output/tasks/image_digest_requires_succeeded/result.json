@@ -1,0 +1,10 @@
+{
+  "task_id": "image_digest_requires_succeeded",
+  "tier": 3,
+  "package_name": "image_digest_requires_succeeded",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "image_digest_requires_succeeded_test.rego:\ndata.image_digest_requires_succeeded_test.test_image_digest_requires_succeeded_invalid: PASS (798.792\u00b5s)\ndata.image_digest_requires_succeeded_test.test_image_digest_requires_succeeded_valid: PASS (816.542\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}

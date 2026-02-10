@@ -1,0 +1,10 @@
+{
+  "task_id": "predicate_metadata_reproducible_check",
+  "tier": 1,
+  "package_name": "predicate_metadata_reproducible_check",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "test_output": "predicate_metadata_reproducible_check_test.rego:\ndata.predicate_metadata_reproducible_check_test.test_predicate_metadata_reproducible_check_valid: PASS (245.166\u00b5s)\ndata.predicate_metadata_reproducible_check_test.test_predicate_metadata_reproducible_check_invalid: PASS (504.458\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2",
+  "errors": [],
+  "status": "pass"
+}
