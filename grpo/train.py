@@ -350,7 +350,7 @@ def main() -> None:
     print(f"  Num generations:  {args.num_generations}")
     print(f"  Batch size:       {args.batch_size} × {args.grad_accum}")
     print(f"  Learning rate:    {args.lr}")
-    print(f"  KL beta:          0.1")
+    print(f"  KL beta:          0.04")
     print(f"  Gen temperature:  0.7")
     print(f"  Save every:       {save_every} steps")
     print(f"  Dataset size:     {len(dataset)}")
@@ -396,8 +396,9 @@ def main() -> None:
         max_completion_length=max_completion_length,
         num_generations=args.num_generations,
 
-        # KL penalty — prevents drift from the SFT policy
-        beta=0.1,
+        # KL penalty — light touch; our rewards are deterministic (OPA/Regal)
+        # so the model can safely explore beyond SFT behavior
+        beta=0.04,
 
         # Optimisation
         learning_rate=args.lr,
