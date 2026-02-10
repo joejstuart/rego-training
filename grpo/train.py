@@ -72,7 +72,7 @@ DEFAULTS = {
     "lora_rank": 32,
     "max_steps": 100,
     "num_generations": 4,
-    "batch_size": 1,
+    "batch_size": 4,              # must be >= num_generations (GRPO compares N completions per prompt)
     "grad_accum": 1,
     "lr": 5e-6,
     "warmup_ratio": 0.1,
@@ -233,7 +233,7 @@ def main() -> None:
     if args.no_unsloth:
         print(f"\nLoading model with standard HF (no Unsloth)...")
         from transformers import AutoModelForCausalLM, AutoTokenizer
-        from peft import LoraConfig, TaskType
+        from peft import LoraConfig, PeftModel, TaskType
 
         tokenizer = AutoTokenizer.from_pretrained(
             args.base_model, trust_remote_code=True,
@@ -241,12 +241,31 @@ def main() -> None:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
-        model = AutoModelForCausalLM.from_pretrained(
-            args.sft_model,
-            torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
-        )
+        sft_path = Path(args.sft_model)
+        is_lora = (sft_path / "adapter_config.json").exists()
 
+        if is_lora:
+            # SFT output is a LoRA adapter — load base model, apply adapter, merge
+            print(f"  SFT model is a LoRA adapter — loading base model {args.base_model}...")
+            base_model = AutoModelForCausalLM.from_pretrained(
+                args.base_model,
+                torch_dtype=torch.bfloat16,
+                trust_remote_code=True,
+            )
+            print(f"  Applying SFT LoRA from {args.sft_model}...")
+            model = PeftModel.from_pretrained(base_model, args.sft_model)
+            print(f"  Merging SFT LoRA into base weights...")
+            model = model.merge_and_unload()
+        else:
+            # SFT output is a full merged model
+            print(f"  Loading merged SFT model from {args.sft_model}...")
+            model = AutoModelForCausalLM.from_pretrained(
+                args.sft_model,
+                torch_dtype=torch.bfloat16,
+                trust_remote_code=True,
+            )
+
+        # New LoRA adapter for GRPO training (on top of merged SFT weights)
         peft_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=args.lora_rank,
@@ -320,6 +339,7 @@ def main() -> None:
     print(f"  GRPO Training Configuration")
     print(f"{'='*60}")
     print(f"  SFT model:        {args.sft_model}")
+    print(f"  SFT is LoRA:      {(Path(args.sft_model) / 'adapter_config.json').exists()}")
     print(f"  Output:           {args.output_dir}")
     print(f"  Dataset:          {dataset_path}")
     print(f"  LoRA rank:        {args.lora_rank}")
@@ -330,6 +350,9 @@ def main() -> None:
     print(f"  Num generations:  {args.num_generations}")
     print(f"  Batch size:       {args.batch_size} × {args.grad_accum}")
     print(f"  Learning rate:    {args.lr}")
+    print(f"  KL beta:          0.1")
+    print(f"  Gen temperature:  0.7")
+    print(f"  Save every:       {save_every} steps")
     print(f"  Dataset size:     {len(dataset)}")
     print(f"  Reward functions: format, opa_parse, opa_test, schema_paths, regal_lint")
     print(f"  OPA available:    {bool(shutil.which('opa'))}")
@@ -359,6 +382,8 @@ def main() -> None:
     else:
         vllm_sampling_params = None
 
+    save_every = max(args.max_steps // 4, 10)  # checkpoint ~4 times during training
+
     training_args = GRPOConfig(
         output_dir=args.output_dir,
 
@@ -366,10 +391,13 @@ def main() -> None:
         **({"vllm_sampling_params": vllm_sampling_params} if vllm_sampling_params else {}),
 
         # Generation
-        temperature=1.0,
+        temperature=0.7,                       # lower → more coherent generations
         max_prompt_length=max_prompt_length,
         max_completion_length=max_completion_length,
         num_generations=args.num_generations,
+
+        # KL penalty — prevents drift from the SFT policy
+        beta=0.1,
 
         # Optimisation
         learning_rate=args.lr,
@@ -377,6 +405,7 @@ def main() -> None:
         warmup_ratio=args.warmup_ratio,
         lr_scheduler_type="linear",
         optim="adamw_8bit",
+        bf16=True,
 
         # Batching
         per_device_train_batch_size=args.batch_size,
@@ -384,7 +413,7 @@ def main() -> None:
 
         # Steps & logging
         max_steps=args.max_steps,
-        save_steps=args.max_steps,  # save at the end
+        save_steps=save_every,                 # intermediate checkpoints
         logging_steps=1,
         report_to="none",
 

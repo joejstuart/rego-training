@@ -8,7 +8,7 @@ Five stacked reward signals scored by OPA / Regal evaluation:
   4. reward_schema_paths  — schema grounding (valid input.* references)
   5. reward_regal_lint    — idiomatic Rego style via `regal lint`
 
-Total signal range: +13.5 (perfect) to -12.0 (worst).
+Total signal range: +15.0 (perfect) to -17.0 (worst).
 
 Each function receives (completions, **kwargs) and returns a list of float
 scores, one per completion.  Extra dataset columns (test_code, package_name,
@@ -101,32 +101,40 @@ def _extract_rego_code(text: str) -> Optional[str]:
 
 
 # ===========================================================================
-# 1. reward_format  (max +3.5 / min -3.0)
+# 1. reward_format  (max +5.0 / min -7.0)
 # ===========================================================================
 
 def reward_format(completions, **kwargs) -> list[float]:
     """Reward structural compliance with Rego deny-rule conventions.
 
     Checks for:
-      - ``<think>`` / ``</think>`` tags  (+0.5 each)
-      - ``package`` declaration           (+0.5)
-      - ``import rego.v1``                (+0.5)
-      - ``deny contains msg if``          (+1.0)
-      - ``sprintf``                       (+0.5)
+      - ``<think>`` / ``</think>`` tags  (+0.5 each, -0.5 if missing)
+      - ``package`` declaration           (+1.0, -2.0 if missing — critical)
+      - ``import rego.v1``                (+0.5, -1.0 if missing)
+      - ``deny contains msg if``          (+2.0, -3.0 if missing — critical)
+      - ``sprintf``                       (+0.5, no penalty if missing)
 
-    Max: +3.5, penalise missing elements: -0.5 each.
+    Max: +5.0, Min: -7.0.
+
+    ``package`` and ``deny contains msg if`` carry the heaviest penalties
+    because missing them means the output is not valid Rego v1.
     """
     scores = []
     for completion in completions:
         response = completion[0]["content"]
         score = 0.0
 
+        # Reasoning traces
         score += 0.5 if "<think>" in response or response.startswith("") else -0.5
         score += 0.5 if "</think>" in response else -0.5
-        score += 0.5 if re.search(r"^package\s+\w+", response, re.M) else -0.5
-        score += 0.5 if "import rego.v1" in response else -0.5
-        score += 1.0 if "deny contains msg if" in response else -1.0
-        score += 0.5 if "sprintf" in response else 0.0  # optional, no penalty
+
+        # Critical structural elements (heavy penalties if missing)
+        score += 1.0 if re.search(r"^package\s+\w+", response, re.M) else -2.0
+        score += 0.5 if "import rego.v1" in response else -1.0
+        score += 2.0 if "deny contains msg if" in response else -3.0
+
+        # Nice-to-have
+        score += 0.5 if "sprintf" in response else 0.0
 
         scores.append(score)
     return scores

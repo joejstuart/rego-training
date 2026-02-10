@@ -49,14 +49,20 @@ att.json
            │  tasks/*/
            ▼
 ┌──────────────────────────┐
-│  Phase 4: SFT Dataset    │  Assemble 1,380 training examples with
-│  phase4_dataset/         │  7 instruction variants × 5 output types:
-└──────────────────────────┘    variants: canonical, terse, verbose,
-                                poor_grammar, reordered, keyword_heavy,
-                                vague
-                                types: rule_only, test_only,
-                                rule_and_test, rule_from_test,
-                                test_from_rule
+│  Phase 4: SFT Dataset    │  Assemble training examples with
+│  phase4_dataset/         │  7 instruction variants × 5 output types
+└──────────┬───────────────┘  + Phase 5 modification examples.
+           │
+           ▼
+┌──────────────────────────┐
+│  Phase 5: Modifications  │  Generate rule-modification training
+│  phase5_modifications/   │  examples (rename, change value, add
+└──────────────────────────┘  guard, relax to set, improve message).
+                               152 modifications × 3 variants = 456.
+
+Total: 1,836 training examples
+  write/reversal:  1,380  (7 variants × 3 types + 2 reversals)
+  modifications:     456  (152 mods × 3 variants)
 ```
 
 ## Directory Structure
@@ -105,7 +111,13 @@ sft/
 │   ├── README.md                      ← Phase 4 documentation
 │   ├── assemble_dataset.py            ← Assembles final JSONL dataset
 │   └── output/
-│       └── rego_sft.jsonl             ← 1,380 training examples
+│       └── rego_sft.jsonl             ← 1,836 training examples
+│
+├── phase5_modifications/
+│   ├── README.md                      ← Phase 5 documentation
+│   ├── generate_modifications.py      ← Generates rule-modification examples
+│   └── output/
+│       └── modifications.jsonl        ← 152 modification records
 │
 ├── train.py                           ← SFT training script (LoRA default)
 └── output/
@@ -151,7 +163,10 @@ python phase2_tests/generate_tests.py
 # Phase 3: Generate Rego rules and validate (template-based, no LLM)
 python phase3_rules/generate_rules_local.py
 
-# Phase 4: Assemble final SFT dataset
+# Phase 5: Generate rule-modification examples
+python phase5_modifications/generate_modifications.py
+
+# Phase 4: Assemble final SFT dataset (includes Phase 5 modifications)
 python phase4_dataset/assemble_dataset.py
 
 # Train (on A100 GPU)
@@ -183,15 +198,17 @@ A rule with only positive tests could be vacuously true (`deny` never fires).
 Negative tests prove the rule actually catches problems. Every test file must
 contain at least one case where `deny` fires and one where it doesn't.
 
-### Why five SFT flavors?
+### Why six SFT output types?
 
 Different use cases require the model to work in different directions:
 - User provides requirements → model writes rule + tests
 - User has existing tests → model writes rule to pass them
 - User has existing rule → model writes tests for it
+- User has existing rule → model modifies it as instructed
 
-Training on all five directions builds flexible understanding rather than
-one-directional pattern matching.
+Training on all six directions builds flexible understanding rather than
+one-directional pattern matching. The modification type (Phase 5) is
+critical for real-world policy maintenance where rules evolve over time.
 
 ### The `deny` convention
 
