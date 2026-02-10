@@ -332,6 +332,8 @@ def main() -> None:
     print(f"  Max prompt length (p90):     {maximum_length} tokens")
     print(f"  Max completion length:       {max_completion_length} tokens")
 
+    save_every = max(args.max_steps // 4, 10)  # checkpoint ~4 times during training
+
     # ------------------------------------------------------------------
     # Print config
     # ------------------------------------------------------------------
@@ -381,8 +383,6 @@ def main() -> None:
         )
     else:
         vllm_sampling_params = None
-
-    save_every = max(args.max_steps // 4, 10)  # checkpoint ~4 times during training
 
     training_args = GRPOConfig(
         output_dir=args.output_dir,
