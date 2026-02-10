@@ -35,7 +35,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # ---------------------------------------------------------------------------
-# System prompt (same as training)
+# System prompt — must match what SFT / GRPO training used (includes schema)
 # ---------------------------------------------------------------------------
 SYSTEM_PROMPT = """\
 You are an expert in the Rego policy language (Open Policy Agent). \
@@ -47,7 +47,48 @@ Conventions you always follow:
 - Use `some x in collection` to iterate (Rego v1 iteration, not indexing).
 - Use `sprintf` to produce human-readable deny messages.
 - The attestation document is accessed via `input`.
-- Tests use `count(<pkg>.deny) == 0` for positive cases and `count(<pkg>.deny) > 0` for negative cases.\
+- Tests use `count(<pkg>.deny) == 0` for positive cases and `count(<pkg>.deny) > 0` for negative cases.
+
+SLSA attestation schema (field → JSON path):
+- _type: ._type
+- predicateType: .predicateType
+- subject[*].name: .subject[*].name
+- subject[*].digest.sha256: .subject[*].digest.sha256
+- buildType: .predicate.buildType
+- builder.id: .predicate.builder.id
+- materials: .predicate.materials (array)
+- materials[*].uri: .predicate.materials[*].uri
+- materials[*].digest.sha256: .predicate.materials[*].digest.sha256
+- materials[*].digest.sha1: .predicate.materials[*].digest.sha1
+- invocation.parameters.git-url: .predicate.invocation.parameters.git-url
+- invocation.parameters.revision: .predicate.invocation.parameters.revision
+- invocation.parameters.output-image: .predicate.invocation.parameters.output-image
+- invocation.parameters.hermetic: .predicate.invocation.parameters.hermetic
+- invocation.parameters.rebuild: .predicate.invocation.parameters.rebuild
+- invocation.parameters.skip-checks: .predicate.invocation.parameters.skip-checks
+- metadata.buildStartedOn: .predicate.metadata.buildStartedOn
+- metadata.buildFinishedOn: .predicate.metadata.buildFinishedOn
+- metadata.reproducible: .predicate.metadata.reproducible
+- tasks[*].name: .predicate.buildConfig.tasks[*].name
+- tasks[*].status: .predicate.buildConfig.tasks[*].status
+- tasks[*].startedOn: .predicate.buildConfig.tasks[*].startedOn
+- tasks[*].finishedOn: .predicate.buildConfig.tasks[*].finishedOn
+- tasks[*].serviceAccountName: .predicate.buildConfig.tasks[*].serviceAccountName
+- tasks[*].ref.resolver: .predicate.buildConfig.tasks[*].ref.resolver
+- tasks[*].ref.params[*].name: .predicate.buildConfig.tasks[*].ref.params[*].name
+- tasks[*].ref.params[*].value: .predicate.buildConfig.tasks[*].ref.params[*].value
+- tasks[*].steps: .predicate.buildConfig.tasks[*].steps (array)
+- tasks[*].steps[*].entryPoint: .predicate.buildConfig.tasks[*].steps[*].entryPoint
+- tasks[*].steps[*].environment.container: .predicate.buildConfig.tasks[*].steps[*].environment.container
+- tasks[*].steps[*].environment.image: .predicate.buildConfig.tasks[*].steps[*].environment.image
+- tasks[*].results[*].name: .predicate.buildConfig.tasks[*].results[*].name
+- tasks[*].results[*].type: .predicate.buildConfig.tasks[*].results[*].type
+- tasks[*].results[*].value: .predicate.buildConfig.tasks[*].results[*].value
+- tasks[*].invocation.parameters.HERMETIC: .predicate.buildConfig.tasks[*].invocation.parameters.HERMETIC
+- tasks[*].invocation.parameters.TLSVERIFY: .predicate.buildConfig.tasks[*].invocation.parameters.TLSVERIFY
+- tasks[*].invocation.parameters.COMMIT_SHA: .predicate.buildConfig.tasks[*].invocation.parameters.COMMIT_SHA
+- tasks[*].invocation.parameters.DOCKERFILE: .predicate.buildConfig.tasks[*].invocation.parameters.DOCKERFILE
+- tasks[*].invocation.parameters.IMAGE: .predicate.buildConfig.tasks[*].invocation.parameters.IMAGE\
 """
 
 
@@ -107,13 +148,15 @@ def load_model(args: argparse.Namespace):
     if is_lora:
         print(f"Detected LoRA adapter at {args.model}")
         print(f"Loading base model {args.base_model}...")
-        from peft import AutoPeftModelForCausalLM
-        model = AutoPeftModelForCausalLM.from_pretrained(
-            args.model,
+        from peft import PeftModel
+        base_model = AutoModelForCausalLM.from_pretrained(
+            args.base_model,
             torch_dtype=torch.bfloat16,
             device_map="auto",
             trust_remote_code=True,
         )
+        print(f"  Applying LoRA adapter from {args.model}...")
+        model = PeftModel.from_pretrained(base_model, args.model)
         print(f"  LoRA adapter loaded and applied.")
     else:
         print(f"Loading model from {args.model}...")
