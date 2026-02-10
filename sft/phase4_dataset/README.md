@@ -63,6 +63,7 @@ every example and reports token statistics.
 
 - `phase1_instructions/output/instructions.jsonl` — 60 canonical instructions
 - `phase3_rules/output/tasks/` — 60 validated rule + test pairs (all passing)
+- `phase5_modifications/output/modifications.jsonl` — 152 rule-modification records
 
 ## Output
 
@@ -79,6 +80,7 @@ every example and reports token statistics.
 | **reordered** | Constraint before context | "If the predicateType is wrong, reject. Write a rule." |
 | **keyword_heavy** | Rego jargon throughout | "Create a partial set rule `deny contains msg if`..." |
 | **vague** | Under-specified but answerable | "Write a rule to verify the SLSA predicate type." |
+| **casual** | Informal "can you" framing (modifications only) | "Can you rename the package from X to Y?" |
 
 ## Output Types
 
@@ -89,21 +91,27 @@ every example and reports token statistics.
 | `rule_and_test` | 420 | instruction → rule + tests |
 | `rule_from_test` | 60 | tests → rule (canonical only) |
 | `test_from_rule` | 60 | rule → tests (canonical only) |
+| `modify_rule` | 456 | original rule + instruction → modified rule |
 
 ## Math
 
 ```
-60 tasks × 7 variants × 3 output types  = 1,260
-60 tasks × 1 canonical × 2 reversals    =   120
-                                    Total: 1,380
+Write from scratch:
+  60 tasks × 7 variants × 3 output types  = 1,260
+  60 tasks × 1 canonical × 2 reversals    =   120
+                                  Subtotal: 1,380
+
+Rule modifications (Phase 5):
+  152 modifications × 3 variants           =   456
+
+                                     Total: 1,836
 ```
 
 ## Results
 
-- **1,380 training examples** generated
+- **1,836 training examples** generated (1,380 write/reversal + 456 modifications)
 - **0 tasks skipped** (all 60 passed Phase 3)
-- **1,380 unique user messages** (zero duplicates)
-- **1,380/1,380 examples have `<think>` traces**
+- **1,836/1,836 examples have `<think>` traces**
 - **0 empty responses**
 
 ### Token audit (Qwen3-4B tokenizer)
@@ -131,9 +139,9 @@ By tier:
 
 | Tier | Examples |
 |------|----------|
-| Tier 1 (field-level) | 874 |
-| Tier 2 (pattern-level) | 276 |
-| Tier 3 (composite) | 230 |
+| Tier 1 (field-level) | 1,198 |
+| Tier 2 (pattern-level) | 348 |
+| Tier 3 (composite) | 290 |
 
 ### `<think>` trace lengths
 
@@ -143,7 +151,7 @@ min=127 chars, median=428 chars, max=691 chars
 
 ### File size
 
-~3.4 MB
+~4.1 MB
 
 ## Running
 

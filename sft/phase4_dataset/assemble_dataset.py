@@ -7,7 +7,10 @@ For each of the 60 tasks that passed Phase 3, this script:
   3. Adds 2 direction-reversal examples (rule→test, test→rule) per task.
   4. Formats everything in Qwen3 messages format with system prompt.
   5. Adds <think> reasoning traces to teach the model HOW to approach each problem.
-  6. Runs a token-length audit with the Qwen3 tokenizer.
+  6. Loads Phase 5 rule-modification records and generates 3 instruction variants
+     per modification (canonical, terse, casual) — teaches the model to modify
+     existing Rego rules.
+  7. Runs a token-length audit with the Qwen3 tokenizer.
 
 Output: phase4_dataset/output/rego_sft.jsonl
 
@@ -46,6 +49,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 SFT_ROOT = SCRIPT_DIR.parent
 INSTRUCTIONS_PATH = SFT_ROOT / "phase1_instructions" / "output" / "instructions.jsonl"
 PHASE3_TASKS = SFT_ROOT / "phase3_rules" / "output" / "tasks"
+PHASE5_MODS_PATH = SFT_ROOT / "phase5_modifications" / "output" / "modifications.jsonl"
 OUTPUT_DIR = SCRIPT_DIR / "output"
 OUTPUT_FILE = OUTPUT_DIR / "rego_sft.jsonl"
 
@@ -67,7 +71,48 @@ Conventions you always follow:
 - Use `some x in collection` to iterate (Rego v1 iteration, not indexing).
 - Use `sprintf` to produce human-readable deny messages.
 - The attestation document is accessed via `input`.
-- Tests use `count(<pkg>.deny) == 0` for positive cases and `count(<pkg>.deny) > 0` for negative cases.\
+- Tests use `count(<pkg>.deny) == 0` for positive cases and `count(<pkg>.deny) > 0` for negative cases.
+
+SLSA attestation schema (field → JSON path):
+- _type: ._type
+- predicateType: .predicateType
+- subject[*].name: .subject[*].name
+- subject[*].digest.sha256: .subject[*].digest.sha256
+- buildType: .predicate.buildType
+- builder.id: .predicate.builder.id
+- materials: .predicate.materials (array)
+- materials[*].uri: .predicate.materials[*].uri
+- materials[*].digest.sha256: .predicate.materials[*].digest.sha256
+- materials[*].digest.sha1: .predicate.materials[*].digest.sha1
+- invocation.parameters.git-url: .predicate.invocation.parameters.git-url
+- invocation.parameters.revision: .predicate.invocation.parameters.revision
+- invocation.parameters.output-image: .predicate.invocation.parameters.output-image
+- invocation.parameters.hermetic: .predicate.invocation.parameters.hermetic
+- invocation.parameters.rebuild: .predicate.invocation.parameters.rebuild
+- invocation.parameters.skip-checks: .predicate.invocation.parameters.skip-checks
+- metadata.buildStartedOn: .predicate.metadata.buildStartedOn
+- metadata.buildFinishedOn: .predicate.metadata.buildFinishedOn
+- metadata.reproducible: .predicate.metadata.reproducible
+- tasks[*].name: .predicate.buildConfig.tasks[*].name
+- tasks[*].status: .predicate.buildConfig.tasks[*].status
+- tasks[*].startedOn: .predicate.buildConfig.tasks[*].startedOn
+- tasks[*].finishedOn: .predicate.buildConfig.tasks[*].finishedOn
+- tasks[*].serviceAccountName: .predicate.buildConfig.tasks[*].serviceAccountName
+- tasks[*].ref.resolver: .predicate.buildConfig.tasks[*].ref.resolver
+- tasks[*].ref.params[*].name: .predicate.buildConfig.tasks[*].ref.params[*].name
+- tasks[*].ref.params[*].value: .predicate.buildConfig.tasks[*].ref.params[*].value
+- tasks[*].steps: .predicate.buildConfig.tasks[*].steps (array)
+- tasks[*].steps[*].entryPoint: .predicate.buildConfig.tasks[*].steps[*].entryPoint
+- tasks[*].steps[*].environment.container: .predicate.buildConfig.tasks[*].steps[*].environment.container
+- tasks[*].steps[*].environment.image: .predicate.buildConfig.tasks[*].steps[*].environment.image
+- tasks[*].results[*].name: .predicate.buildConfig.tasks[*].results[*].name
+- tasks[*].results[*].type: .predicate.buildConfig.tasks[*].results[*].type
+- tasks[*].results[*].value: .predicate.buildConfig.tasks[*].results[*].value
+- tasks[*].invocation.parameters.HERMETIC: .predicate.buildConfig.tasks[*].invocation.parameters.HERMETIC
+- tasks[*].invocation.parameters.TLSVERIFY: .predicate.buildConfig.tasks[*].invocation.parameters.TLSVERIFY
+- tasks[*].invocation.parameters.COMMIT_SHA: .predicate.buildConfig.tasks[*].invocation.parameters.COMMIT_SHA
+- tasks[*].invocation.parameters.DOCKERFILE: .predicate.buildConfig.tasks[*].invocation.parameters.DOCKERFILE
+- tasks[*].invocation.parameters.IMAGE: .predicate.buildConfig.tasks[*].invocation.parameters.IMAGE\
 """
 
 
@@ -336,6 +381,33 @@ def generate_think_trace(
         return "I need to carefully consider the requirements and write correct Rego code."
 
 
+def _think_for_ambiguous(
+    disambiguation_note: str,
+    instr_rec: dict,
+    rule_code: str,
+    out_type: str,
+) -> str:
+    """Build a <think> trace that starts with schema disambiguation,
+    then appends the normal pattern-selection reasoning."""
+    # Phase 1: schema grounding (from the hand-written note)
+    lines = [
+        disambiguation_note.strip(),
+        "",
+    ]
+
+    # Phase 2: normal rule/test reasoning (reuse existing generators)
+    if out_type == "rule_only":
+        lines.append(_think_for_rule(instr_rec, rule_code, out_type))
+    elif out_type == "test_only":
+        lines.append(_think_for_test(instr_rec, rule_code))
+    elif out_type == "rule_and_test":
+        lines.append(_think_for_rule_and_test(instr_rec, rule_code))
+    else:
+        lines.append(_think_for_rule(instr_rec, rule_code, out_type))
+
+    return "\n".join(lines)
+
+
 # ===========================================================================
 # Instruction-variant generators
 # ===========================================================================
@@ -465,6 +537,365 @@ VARIANT_GENERATORS = [
 
 
 # ===========================================================================
+# Ambiguous prompt definitions — teach schema disambiguation
+# ===========================================================================
+# Each entry maps a task_id to a list of (ambiguous_prompt, disambiguation_note)
+# tuples.  The prompt uses informal / wrong field names; the note explains
+# how to resolve them against the attestation schema in the system prompt.
+#
+# Only tasks whose fields are commonly mis-referenced are listed.  One to
+# three ambiguous prompts per task is sufficient — the goal is to teach the
+# *procedure*, not exhaustively enumerate misspellings.
+
+AMBIGUOUS_PROMPTS: dict[str, list[tuple[str, str]]] = {
+    # ── materials digest ──────────────────────────────────────────────────
+    "predicate_materials_digest_sha256_check": [
+        (
+            "Write a Rego deny rule that fails if the materials contains "
+            "a digest.sha equal to "
+            "'75c6ac42431e29465eba3ff3367a18416722cdc18cb7c5745b448f199082fdef'",
+            'The user wrote "digest.sha" but the attestation schema has '
+            "`materials[*].digest.sha256` (64 hex chars) and "
+            "`materials[*].digest.sha1` (40 hex chars) — there is no "
+            "bare `digest.sha` field.  The provided hash is 64 hex "
+            "characters, so this is a sha256 digest.  "
+            "Correct path: `.predicate.materials[*].digest.sha256`.",
+        ),
+        (
+            "deny if the material sha hash doesn't match "
+            "'75c6ac42431e29465eba3ff3367a18416722cdc18cb7c5745b448f199082fdef'",
+            'The user wrote "material sha hash".  Checking the schema: '
+            "materials live at `.predicate.materials` and each entry has "
+            "`digest.sha256` or `digest.sha1`.  "
+            'A 64-char hex value is sha256.  No field called "sha hash" '
+            "exists.  Correct path: `.predicate.materials[*].digest.sha256`.",
+        ),
+        (
+            "check that the sha in materials equals "
+            "'75c6ac42431e29465eba3ff3367a18416722cdc18cb7c5745b448f199082fdef'",
+            'The user said "the sha in materials".  The schema shows '
+            "`materials[*].digest.sha256` and `materials[*].digest.sha1`.  "
+            "The hash is 64 hex chars → sha256.  "
+            "Correct path: `.predicate.materials[*].digest.sha256`.",
+        ),
+    ],
+
+    # ── materials URI ─────────────────────────────────────────────────────
+    "predicate_materials_uri_check": [
+        (
+            "deny if the material url is not "
+            '"oci://registry.access.redhat.com/ubi9/skopeo"',
+            'The user wrote "material url" but the schema field is '
+            "`materials[*].uri`, not `url`.  "
+            "Correct path: `.predicate.materials[*].uri`.",
+        ),
+        (
+            "write a rule that checks the materials image reference",
+            'The user said "materials image reference".  In the schema, '
+            "the image reference for a material is stored in "
+            "`materials[*].uri`.  "
+            "Correct path: `.predicate.materials[*].uri`.",
+        ),
+    ],
+
+    # ── subject digest ────────────────────────────────────────────────────
+    "subject_digest_sha256_check": [
+        (
+            "deny if subject sha is missing",
+            'The user wrote "subject sha".  The schema has '
+            "`subject[*].digest.sha256` — there is no bare `sha` field "
+            "on subjects.  Correct path: `.subject[*].digest.sha256`.",
+        ),
+        (
+            "write a deny rule checking the subject digest hash",
+            'The user said "subject digest hash".  The schema shows '
+            "`subject[*].digest.sha256`.  Subjects only have sha256 "
+            "digests.  Correct path: `.subject[*].digest.sha256`.",
+        ),
+    ],
+
+    # ── subject name ──────────────────────────────────────────────────────
+    "subject_name_check": [
+        (
+            "deny if the image name in subject is wrong",
+            'The user said "image name in subject".  The schema has '
+            "`subject[*].name` which contains the image reference.  "
+            "Correct path: `.subject[*].name`.",
+        ),
+    ],
+
+    # ── builder ID ────────────────────────────────────────────────────────
+    "predicate_builder_id_check": [
+        (
+            "deny if the build ID is not "
+            '"https://tekton.dev/chains/v2"',
+            'The user wrote "build ID" but the schema field is '
+            "`builder.id`, not `build ID`.  "
+            "Correct path: `.predicate.builder.id`.",
+        ),
+        (
+            "check the builder field is tekton chains v2",
+            'The user said "the builder field".  The schema shows '
+            "`builder.id` which holds the builder URI.  "
+            "Correct path: `.predicate.builder.id`.",
+        ),
+    ],
+
+    # ── buildType ─────────────────────────────────────────────────────────
+    "predicate_build_type_check": [
+        (
+            "deny if build type is wrong",
+            'The user wrote "build type".  The schema field is '
+            "`buildType` (camelCase, not hyphenated).  "
+            "Correct path: `.predicate.buildType`.",
+        ),
+    ],
+
+    # ── predicateType ─────────────────────────────────────────────────────
+    "predicate_type_check": [
+        (
+            "deny if the predicate is not slsa provenance v0.2",
+            'The user said "the predicate is not slsa provenance".  '
+            "The field that holds the predicate type URI is "
+            "`.predicateType` (top-level, not under `.predicate`).  "
+            "Correct path: `.predicateType`.",
+        ),
+        (
+            "write a rule checking the attestation type",
+            'The user said "attestation type".  This likely refers to '
+            "`.predicateType` which identifies the SLSA predicate "
+            "version.  Correct path: `.predicateType`.",
+        ),
+    ],
+
+    # ── invocation parameters ─────────────────────────────────────────────
+    "predicate_invocation_parameters_hermetic_check": [
+        (
+            "deny if hermetic build is not enabled",
+            'The user said "hermetic build is not enabled".  The schema '
+            "has two hermetic fields: the pipeline-level "
+            "`.predicate.invocation.parameters.hermetic` and the "
+            "per-task `.predicate.buildConfig.tasks[*].invocation"
+            ".parameters.HERMETIC`.  For a simple check, the "
+            "pipeline-level field is: "
+            "`.predicate.invocation.parameters.hermetic`.",
+        ),
+    ],
+
+    "predicate_invocation_parameters_git_url_check": [
+        (
+            "deny if the git repo url is missing",
+            'The user wrote "git repo url".  The schema field is '
+            "`invocation.parameters.git-url` (hyphenated, not camelCase).  "
+            "Correct path: `.predicate.invocation.parameters.git-url`.",
+        ),
+        (
+            "check the source repository URL",
+            'The user said "source repository URL".  In the schema, '
+            "the source repo is stored in "
+            "`invocation.parameters.git-url`.  "
+            "Correct path: `.predicate.invocation.parameters.git-url`.",
+        ),
+    ],
+
+    "predicate_invocation_parameters_output_image_check": [
+        (
+            "deny if the output image is missing from the attestation",
+            'The user said "output image".  The schema has '
+            "`invocation.parameters.output-image` (hyphenated).  "
+            "Correct path: `.predicate.invocation.parameters.output-image`.",
+        ),
+    ],
+
+    "predicate_invocation_parameters_revision_check": [
+        (
+            "deny if the git commit sha is missing",
+            'The user said "git commit sha".  The schema field for the '
+            "commit revision at the pipeline level is "
+            "`invocation.parameters.revision`.  "
+            "(Per-task there is also `tasks[*].invocation.parameters"
+            ".COMMIT_SHA`.)  "
+            "Correct path: `.predicate.invocation.parameters.revision`.",
+        ),
+    ],
+
+    "predicate_invocation_parameters_skip_checks_check": [
+        (
+            "deny if checks were skipped",
+            'The user said "checks were skipped".  The schema field is '
+            '`invocation.parameters.skip-checks` which is `"true"` when '
+            "checks are skipped.  "
+            "Correct path: `.predicate.invocation.parameters.skip-checks`.",
+        ),
+    ],
+
+    # ── task-level fields ─────────────────────────────────────────────────
+    "task_status_check": [
+        (
+            "deny if any task failed",
+            'The user said "task failed".  The schema field is '
+            '`tasks[*].status` — a successful task has status `"Succeeded"`.  '
+            "Correct path: `.predicate.buildConfig.tasks[*].status`.",
+        ),
+        (
+            "write a rule checking task completion status",
+            'The user said "task completion status".  The schema has '
+            "`tasks[*].status`.  "
+            "Correct path: `.predicate.buildConfig.tasks[*].status`.",
+        ),
+    ],
+
+    "task_ref_resolver_check": [
+        (
+            "deny if any task doesn't use the bundles resolver",
+            'The user said "bundles resolver".  The schema field is '
+            "`tasks[*].ref.resolver`.  "
+            "Correct path: `.predicate.buildConfig.tasks[*].ref.resolver`.",
+        ),
+    ],
+
+    "task_service_account_name_check": [
+        (
+            "deny if the service account is not appstudio-pipeline",
+            'The user said "service account".  The schema field is '
+            "`tasks[*].serviceAccountName`.  "
+            "Correct path: `.predicate.buildConfig.tasks[*]"
+            ".serviceAccountName`.",
+        ),
+    ],
+
+    "task_invocation_parameters_commit_sha_check": [
+        (
+            "deny if the task commit sha is missing",
+            'The user said "task commit sha".  The schema has '
+            "`tasks[*].invocation.parameters.COMMIT_SHA` (uppercase, "
+            "per-task parameter).  Note this is different from the "
+            "pipeline-level `invocation.parameters.revision`.  "
+            "Correct path: `.predicate.buildConfig.tasks[*].invocation"
+            ".parameters.COMMIT_SHA`.",
+        ),
+    ],
+
+    "task_invocation_parameters_tlsverify_check": [
+        (
+            "deny if TLS verification is disabled on any task",
+            'The user said "TLS verification".  The schema field is '
+            "`tasks[*].invocation.parameters.TLSVERIFY` (uppercase).  "
+            "Correct path: `.predicate.buildConfig.tasks[*].invocation"
+            ".parameters.TLSVERIFY`.",
+        ),
+    ],
+
+    "task_step_environment_image_check": [
+        (
+            "deny if the step container image is wrong",
+            'The user said "step container image".  The schema has '
+            "`tasks[*].steps[*].environment.image` for the image and "
+            "`tasks[*].steps[*].environment.container` for the container "
+            "name — these are different fields.  The user likely means "
+            "the image.  "
+            "Correct path: `.predicate.buildConfig.tasks[*].steps[*]"
+            ".environment.image`.",
+        ),
+    ],
+
+    "task_step_environment_container_check": [
+        (
+            "deny if the step container name is wrong",
+            'The user said "step container name".  The schema has '
+            "`tasks[*].steps[*].environment.container` for the container "
+            "name (distinct from `environment.image`).  "
+            "Correct path: `.predicate.buildConfig.tasks[*].steps[*]"
+            ".environment.container`.",
+        ),
+    ],
+
+    # ── metadata timestamps ───────────────────────────────────────────────
+    "predicate_metadata_build_started_on_check": [
+        (
+            "deny if the build start time is missing",
+            'The user said "build start time".  The schema field is '
+            "`metadata.buildStartedOn` (camelCase ISO-8601 timestamp).  "
+            "Correct path: `.predicate.metadata.buildStartedOn`.",
+        ),
+    ],
+
+    "predicate_metadata_build_finished_on_check": [
+        (
+            "deny if the build end time is missing",
+            'The user said "build end time".  The schema field is '
+            "`metadata.buildFinishedOn` (not `endTime` or `finishTime`).  "
+            "Correct path: `.predicate.metadata.buildFinishedOn`.",
+        ),
+    ],
+
+    # ── composite rules ───────────────────────────────────────────────────
+    "git_revision_matches_material": [
+        (
+            "deny if the git commit doesn't match the material sha",
+            'The user said "git commit" and "material sha".  The commit '
+            "revision is at `.predicate.invocation.parameters.revision`.  "
+            "The git material is the entry in `.predicate.materials` "
+            'whose `uri` starts with `"git+"`, and its hash is in '
+            "`digest.sha1` (40 hex chars, not sha256).  "
+            "Correct paths: `.predicate.invocation.parameters.revision` "
+            "and `.predicate.materials[*].digest.sha1`.",
+        ),
+    ],
+
+    "hermetic_build_required": [
+        (
+            "deny if the build is not hermetic",
+            'The user said "build is not hermetic".  There are two '
+            "levels: pipeline-level `.predicate.invocation.parameters"
+            ".hermetic` and per-task `.predicate.buildConfig.tasks[*]"
+            '.invocation.parameters.HERMETIC`.  A thorough check '
+            "verifies both.",
+        ),
+    ],
+
+    "trusted_builder_id": [
+        (
+            "deny if the builder or build type is untrusted",
+            'The user said "builder or build type".  The schema has '
+            "`.predicate.builder.id` for the builder URI and "
+            "`.predicate.buildType` for the build type.  Both must be "
+            "checked.",
+        ),
+    ],
+
+    "checks_not_skipped": [
+        (
+            "deny if someone skipped the CI checks",
+            'The user said "skipped the CI checks".  The schema field '
+            "is `.predicate.invocation.parameters.skip-checks` — it is "
+            '`"true"` when checks were skipped.  '
+            "Correct path: `.predicate.invocation.parameters.skip-checks`.",
+        ),
+    ],
+
+    "build_timestamps_chronological": [
+        (
+            "deny if the build finished before it started",
+            'The user said "finished before it started".  The schema has '
+            "`.predicate.metadata.buildStartedOn` and "
+            "`.predicate.metadata.buildFinishedOn` (ISO-8601 timestamps).  "
+            "Compare using `time.parse_rfc3339_ns()`.",
+        ),
+    ],
+
+    "source_repo_uses_https": [
+        (
+            "deny if the source repo is not using https",
+            'The user said "source repo".  The schema field is '
+            "`.predicate.invocation.parameters.git-url`.  "
+            'Check that it starts with `"https://"`.',
+        ),
+    ],
+}
+
+
+# ===========================================================================
 # Output-type instruction wrappers
 # ===========================================================================
 
@@ -582,6 +1013,92 @@ def _make_test_from_rule_instruction(rule_code: str) -> str:
 
 
 # ===========================================================================
+# Phase 5: Modification instruction variants + <think> traces
+# ===========================================================================
+
+def _mod_variant_canonical(mod_rec: dict) -> str:
+    """Clear, professional instruction with original code."""
+    return (
+        f"Here is an existing Rego rule:\n\n"
+        f"```rego\n{mod_rec['original_rule'].strip()}\n```\n\n"
+        f"{mod_rec['instruction']}"
+    )
+
+
+def _mod_variant_terse(mod_rec: dict) -> str:
+    """Minimal prompt with code and instruction."""
+    return (
+        f"```rego\n{mod_rec['original_rule'].strip()}\n```\n\n"
+        f"{mod_rec['instruction'].lower()}"
+    )
+
+
+def _mod_variant_casual(mod_rec: dict) -> str:
+    """Informal request with "can you" framing."""
+    instr = mod_rec["instruction"]
+    # Lowercase the first char if it's uppercase and doesn't start with a backtick
+    if instr and instr[0].isupper() and not instr.startswith("`"):
+        instr = instr[0].lower() + instr[1:]
+    return (
+        f"I have this Rego rule:\n\n"
+        f"```rego\n{mod_rec['original_rule'].strip()}\n```\n\n"
+        f"Can you {instr.rstrip('.')}?"
+    )
+
+
+MOD_VARIANT_GENERATORS = [
+    ("canonical", _mod_variant_canonical),
+    ("terse", _mod_variant_terse),
+    ("casual", _mod_variant_casual),
+]
+
+
+def _think_for_modification(mod_rec: dict) -> str:
+    """Generate a <think> reasoning trace for a rule-modification task."""
+    mod_type = mod_rec["mod_type"]
+
+    lines = [
+        "Let me analyze the original rule to understand what needs to change.",
+        "",
+    ]
+
+    if mod_type == "rename_package":
+        lines.append(
+            "I need to update the `package` declaration on the first line. "
+            "The rest of the rule logic stays exactly the same."
+        )
+    elif mod_type == "improve_message":
+        n_msgs = mod_rec["original_rule"].count("msg :=")
+        lines.append(
+            f"I need to add the prefix to {'each' if n_msgs > 1 else 'the'} "
+            f"`msg := ...` assignment ({n_msgs} total). "
+            "The rule logic stays the same — only the messages change."
+        )
+    elif mod_type == "change_value":
+        lines.append(
+            "I need to update the comparison literal and the corresponding "
+            "deny message so they match the new expected value. "
+            "The rule structure stays the same."
+        )
+    elif mod_type == "add_missing_check":
+        lines.append(
+            "I need to add a new `deny contains msg if` block that checks "
+            "for field existence using `not`. The original value-comparison "
+            "rule remains unchanged — the new block goes before it."
+        )
+    elif mod_type == "relax_to_allowlist":
+        lines.append(
+            "Instead of `field != \"value\"`, I'll create a set of allowed "
+            "values and use `not field in allowed`. "
+            "The deny message should list all accepted values."
+        )
+    else:
+        lines.append("I need to carefully modify the rule as requested.")
+
+    return "\n".join(lines)
+
+
+# ===========================================================================
 # Main assembly
 # ===========================================================================
 
@@ -604,6 +1121,19 @@ def load_phase3_result(task_id: str) -> dict | None:
     if result.get("status") != "pass":
         return None
     return result
+
+
+def load_modifications() -> list[dict]:
+    """Load Phase 5 modification records."""
+    if not PHASE5_MODS_PATH.exists():
+        return []
+    records: list[dict] = []
+    with open(PHASE5_MODS_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+    return records
 
 
 def load_file(path: Path) -> str:
@@ -683,9 +1213,81 @@ def assemble() -> list[dict]:
             "type": "test_from_rule",
         })
 
+    write_and_reversal_count = len(examples)
+
+    # --- Ambiguous-prompt examples (schema disambiguation) ---
+    ambig_count = 0
+    for instr_rec in instructions:
+        task_id = instr_rec["id"]
+        pkg = instr_rec["package_name"]
+        tier = instr_rec["tier"]
+
+        if task_id not in AMBIGUOUS_PROMPTS:
+            continue
+
+        result = load_phase3_result(task_id)
+        if result is None:
+            continue
+
+        rule_path = PHASE3_TASKS / task_id / f"{pkg}.rego"
+        test_path = PHASE3_TASKS / task_id / f"{pkg}_test.rego"
+        if not rule_path.exists() or not test_path.exists():
+            continue
+
+        rule_code = load_file(rule_path)
+        test_code = load_file(test_path)
+
+        for ambig_prompt, disambig_note in AMBIGUOUS_PROMPTS[task_id]:
+            # Generate rule_only, test_only, and rule_and_test for each
+            for out_type, wrap_fn, fmt_fn in OUTPUT_TYPES:
+                # For test_only / rule_and_test, lightly adapt the prompt
+                if out_type == "test_only":
+                    user_content = f"write tests for a rule that denies if: {ambig_prompt}"
+                elif out_type == "rule_and_test":
+                    user_content = f"write a deny rule and tests. {ambig_prompt}"
+                else:
+                    user_content = ambig_prompt
+
+                response_code = fmt_fn(rule_code, test_code)
+                think = _think_for_ambiguous(
+                    disambig_note, instr_rec, rule_code, out_type,
+                )
+                messages = make_messages(user_content, response_code, think)
+
+                examples.append({
+                    "messages": messages,
+                    "task_id": task_id,
+                    "tier": tier,
+                    "variant": "ambiguous",
+                    "type": out_type,
+                })
+                ambig_count += 1
+
+    # --- Phase 5: Rule-modification examples ---
+    modifications = load_modifications()
+    mod_count = 0
+    for mod_rec in modifications:
+        for variant_name, variant_fn in MOD_VARIANT_GENERATORS:
+            user_content = variant_fn(mod_rec)
+            response_code = mod_rec["modified_rule"].strip()
+            think = _think_for_modification(mod_rec)
+            messages = make_messages(user_content, response_code, think)
+
+            examples.append({
+                "messages": messages,
+                "task_id": mod_rec["id"],
+                "tier": mod_rec["tier"],
+                "variant": variant_name,
+                "type": "modify_rule",
+            })
+            mod_count += 1
+
     print(f"Tasks loaded:   {len(instructions)}")
     print(f"Tasks skipped:  {skipped}")
     print(f"Tasks used:     {len(instructions) - skipped}")
+    print(f"Write/reversal: {write_and_reversal_count}")
+    print(f"Ambiguous:      {ambig_count}")
+    print(f"Modifications:  {len(modifications)} records × 3 variants = {mod_count}")
     print(f"Total examples: {len(examples)}")
 
     return examples
@@ -716,7 +1318,10 @@ def print_stats(examples: list[dict]) -> None:
 
     type_counts = Counter(ex["type"] for ex in examples)
     print(f"\nBy output type:")
-    for t in ["rule_only", "test_only", "rule_and_test", "rule_from_test", "test_from_rule"]:
+    for t in [
+        "rule_only", "test_only", "rule_and_test",
+        "rule_from_test", "test_from_rule", "modify_rule",
+    ]:
         print(f"  {t:20s}: {type_counts.get(t, 0)}")
 
     variant_counts = Counter(ex["variant"] for ex in examples)
