@@ -519,6 +519,45 @@ def build_dataset() -> list[dict]:
                 "variant": "ambiguous",
             })
 
+    # ── Custom value / operator flip variants ─────────────────────────────
+    # Each has a modified test file so GRPO reward functions can verify.
+    from sft.phase4_dataset.assemble_dataset import _generate_custom_value_variants
+
+    cv_count = 0
+    for instr_rec in instructions:
+        task_id = instr_rec["id"]
+        pkg = instr_rec["package_name"]
+
+        result = _load_phase3_result(task_id)
+        if result is None:
+            continue
+
+        rule_path = PHASE3_TASKS / task_id / f"{pkg}.rego"
+        test_path = PHASE3_TASKS / task_id / f"{pkg}_test.rego"
+        if not rule_path.exists() or not test_path.exists():
+            continue
+
+        rule_code = rule_path.read_text()
+        test_code = test_path.read_text()
+
+        for variant_rec in _generate_custom_value_variants(
+            instr_rec, rule_code, test_code,
+        ):
+            records.append({
+                "prompt": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": variant_rec["instruction"]},
+                ],
+                "test_code": variant_rec["modified_test"],
+                "package_name": pkg,
+                "rule_code": variant_rec["modified_rule"],
+                "task_id": task_id,
+                "variant": f"custom_value_{variant_rec['sub_variant']}",
+            })
+            cv_count += 1
+
+    print(f"  Custom value variants: {cv_count}")
+
     # ── Error-fix prompts (broken code + real error output) ──────────────
     print("  Generating error-fix variants (running opa/regal on corrupted rules)...")
     error_records = _build_error_fix_records(instructions)

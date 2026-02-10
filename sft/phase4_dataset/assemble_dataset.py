@@ -537,6 +537,710 @@ VARIANT_GENERATORS = [
 
 
 # ===========================================================================
+# Compositional variants — custom value & operator variants
+# ===========================================================================
+# These variants change the CONDITION axis: swap the literal value being
+# compared, or flip the operator (``!=`` → ``==`` / ``==`` → ``!=``).
+# Each variant produces a modified rule AND test so GRPO can verify them.
+#
+# Two sub-types:
+#   value_swap   — same operator, different literal
+#                  e.g. ``status != "Succeeded"`` → ``status != "Running"``
+#   operator_flip — flip operator + use a "bad"/"expected" value
+#                  e.g. ``status != "Succeeded"`` → ``status == "Failed"``
+
+# Value alternatives: original_value → {swap, flip}
+# "swap" is a plausible alternative for the SAME operator.
+# "flip" is the value for the OPPOSITE operator.
+_VALUE_MAP: dict[str, dict[str, str]] = {
+    # task status
+    "Succeeded": {"swap": "Running", "flip": "Failed"},
+    # resolver
+    "bundles": {"swap": "git", "flip": "cluster"},
+    # boolean strings
+    "true": {"swap": "false", "flip": "false"},
+    "false": {"swap": "true", "flip": "true"},
+    # Dockerfile name
+    "Containerfile": {"swap": "Dockerfile", "flip": "Makefile"},
+    # task / param / result names
+    "init": {"swap": "build", "flip": "cleanup"},
+    "name": {"swap": "bundle", "flip": "kind"},
+    "string": {"swap": "integer", "flip": "object"},
+    "build": {"swap": "test", "flip": "deploy"},
+    # service account
+    "appstudio-pipeline": {"swap": "tekton-pipeline", "flip": "default"},
+    # type / build URIs
+    "https://in-toto.io/Statement/v0.1": {
+        "swap": "https://in-toto.io/Statement/v1.0",
+        "flip": "https://example.com/bad-type",
+    },
+    "https://slsa.dev/provenance/v0.2": {
+        "swap": "https://slsa.dev/provenance/v1.0",
+        "flip": "https://example.com/untrusted",
+    },
+    "tekton.dev/v1beta1/PipelineRun": {
+        "swap": "tekton.dev/v1/TaskRun",
+        "flip": "unknown/v1/UnknownRun",
+    },
+    "https://tekton.dev/chains/v2": {
+        "swap": "https://tekton.dev/chains/v1",
+        "flip": "https://untrusted.example.com/builder",
+    },
+    "https://github.com/enterprise-contract/golden-container": {
+        "swap": "https://github.com/myorg/my-app",
+        "flip": "http://evil.example.com/repo",
+    },
+    "oci://registry.access.redhat.com/ubi9/skopeo": {
+        "swap": "oci://quay.io/redhat/ubi9-minimal",
+        "flip": "oci://untrusted.example.com/image",
+    },
+}
+
+
+def _extract_comparison(line: str) -> tuple[str, str, str, str] | None:
+    """Extract (field_expr, operator, value, leaf_key) from a comparison line.
+
+    E.g. ``task.status != "Succeeded"``
+      → ``('task.status', '!=', 'Succeeded', 'status')``
+    """
+    m = re.match(r'\s*([\w.]+(?:\["[^"]+"\])?)\s*(!=|==)\s*"([^"]*)"', line)
+    if not m:
+        return None
+    field_expr = m.group(1)
+    op = m.group(2)
+    value = m.group(3)
+
+    # Leaf key for JSON mock data in tests
+    bracket = re.search(r'\["([^"]+)"\]$', field_expr)
+    if bracket:
+        leaf_key = bracket.group(1)
+    else:
+        leaf_key = field_expr.split(".")[-1]
+
+    return (field_expr, op, value, leaf_key)
+
+
+def _replace_comparison_in_rule(rule_code: str, old_line: str, new_line: str) -> str:
+    """Replace a comparison line in the rule, preserving indentation."""
+    old_indented = f"\t{old_line}"
+    new_indented = f"\t{new_line}"
+    if old_indented in rule_code:
+        return rule_code.replace(old_indented, new_indented, 1)
+    return rule_code
+
+
+def _set_test_values(
+    test_code: str, leaf_key: str,
+    pos_value: str | None = None,
+    neg_value: str | None = None,
+) -> str:
+    """Set field values in the positive and/or negative test sections.
+
+    Splits the test at ``_invalid`` and replaces ALL occurrences of
+    ``"leaf_key": "<anything>"`` in the respective section.
+    Pass ``None`` to leave a section untouched.
+    """
+    if "_invalid" not in test_code:
+        return test_code
+
+    split_idx = test_code.index("_invalid")
+    pos_section = test_code[:split_idx]
+    neg_section = test_code[split_idx:]
+
+    key_pat = f'"{re.escape(leaf_key)}": "[^"]*"'
+
+    if pos_value is not None:
+        pos_section = re.sub(
+            key_pat, f'"{leaf_key}": "{pos_value}"', pos_section,
+        )
+
+    if neg_value is not None:
+        neg_section = re.sub(
+            key_pat, f'"{leaf_key}": "{neg_value}"', neg_section,
+        )
+
+    return pos_section + neg_section
+
+
+def _get_test_field_value(
+    test_code: str, leaf_key: str, section: str = "pos",
+) -> str | None:
+    """Extract the first field value from the positive or negative test section."""
+    if "_invalid" not in test_code:
+        return None
+    split_idx = test_code.index("_invalid")
+    text = test_code[:split_idx] if section == "pos" else test_code[split_idx:]
+    m = re.search(f'"{re.escape(leaf_key)}": "([^"]*)"', text)
+    return m.group(1) if m else None
+
+
+def _swap_value_in_format_string(
+    msg_line: str, old_value: str, new_value: str,
+) -> str:
+    """Replace a literal value in the sprintf format string only.
+
+    Avoids touching field expressions in the argument list
+    (e.g. ``[param.name]`` is left alone even when the value is ``"name"``).
+    """
+    # sprintf case: msg := sprintf("...", [args])
+    m = re.search(r'(sprintf\(")([^"]*)', msg_line)
+    if m:
+        prefix = msg_line[:m.start(2)]
+        fmt_str = m.group(2).replace(old_value, new_value)
+        suffix = msg_line[m.end(2):]
+        return prefix + fmt_str + suffix
+    # Plain string: msg := "..."
+    m2 = re.search(r'(msg\s*:=\s*")([^"]*)', msg_line)
+    if m2:
+        prefix = msg_line[:m2.start(2)]
+        lit = m2.group(2).replace(old_value, new_value)
+        suffix = msg_line[m2.end(2):]
+        return prefix + lit + suffix
+    # Fallback
+    return msg_line.replace(old_value, new_value)
+
+
+def _generate_custom_value_variants(
+    instr_rec: dict, rule_code: str, test_code: str,
+) -> list[dict]:
+    """Generate custom-value variants (value swap + operator flip).
+
+    Returns a list of dicts, each with:
+      instruction     – user prompt
+      modified_rule   – rule with the value / operator changed
+      modified_test   – test with mock data adjusted to match
+      directive_note  – text for the <think> trace
+      sub_variant     – "value_swap" or "operator_flip"
+    """
+    parsed = _parse_first_deny_block(rule_code)
+    if parsed is None:
+        return []
+
+    # Find the first comparison line that has an alternative
+    comparison = None
+    comp_line: str = ""
+    for line in parsed["body_lines"]:
+        comp = _extract_comparison(line)
+        if comp and comp[2] in _VALUE_MAP:
+            comparison = comp
+            comp_line = line
+            break
+
+    if comparison is None:
+        return []
+
+    field_expr, op, old_value, leaf_key = comparison
+    alts = _VALUE_MAP[old_value]
+    canonical = instr_rec["instruction"]
+    msg_line = parsed["msg_line"]
+
+    # Skip very long values (images with sha256 hashes)
+    if len(old_value) > 80:
+        return []
+
+    # Read current test values for collision detection
+    cur_pos = _get_test_field_value(test_code, leaf_key, "pos")
+    cur_neg = _get_test_field_value(test_code, leaf_key, "neg")
+
+    # Helper for readable field references in instructions
+    def _short_field(expr: str) -> str:
+        return expr.split(".", 1)[-1] if "." in expr else expr
+
+    variants: list[dict] = []
+
+    # ── Variant 1: Value swap (same operator, different literal) ──────
+    swap_val = alts["swap"]
+    swap_comp_line = comp_line.replace(f'"{old_value}"', f'"{swap_val}"')
+    swap_msg = _swap_value_in_format_string(msg_line, old_value, swap_val)
+    swap_rule = _replace_comparison_in_rule(rule_code, comp_line, swap_comp_line)
+    swap_rule = _swap_msg_in_rule(swap_rule, msg_line, swap_msg) or swap_rule
+
+    # Compute correct test values, avoiding collisions
+    if op == "!=":
+        # Positive must have swap_val (the new expected value)
+        swap_pos = swap_val
+        # Negative must NOT have swap_val
+        swap_neg = (
+            "INVALID_VALUE" if cur_neg == swap_val
+            else None  # leave as-is
+        )
+    else:  # ==
+        # Negative must have swap_val (the new blocked value)
+        swap_neg = swap_val
+        # Positive must NOT have swap_val
+        swap_pos = (
+            old_value if cur_pos == swap_val
+            else None  # leave as-is
+        )
+
+    swap_test = _set_test_values(test_code, leaf_key, swap_pos, swap_neg)
+
+    if op == "!=":
+        instr_text = (
+            f"Write a Rego deny rule that rejects if "
+            f"`{_short_field(field_expr)}` "
+            f'is not `"{swap_val}"`. '
+            f"(Same structure as {instr_rec['package_name']}, different expected value.)"
+        )
+        directive_note = (
+            f'The user wants to check for "{swap_val}" instead of '
+            f'"{old_value}".  Same operator ({op}), same field, '
+            f"just a different literal."
+        )
+    else:
+        instr_text = (
+            f"Write a Rego deny rule that denies if "
+            f"`{_short_field(field_expr)}` "
+            f'equals `"{swap_val}"`. '
+            f"(Same structure as {instr_rec['package_name']}, different value.)"
+        )
+        directive_note = (
+            f'The user wants to block "{swap_val}" instead of '
+            f'"{old_value}".  Same operator ({op}), same field, '
+            f"just a different blocked value."
+        )
+
+    variants.append({
+        "instruction": instr_text,
+        "modified_rule": swap_rule,
+        "modified_test": swap_test,
+        "directive_note": directive_note,
+        "sub_variant": "value_swap",
+    })
+
+    # ── Variant 2: Operator flip (!=→== or ==→!=) ────────────────────
+    flip_val = alts["flip"]
+    leaf_desc = leaf_key.replace("-", " ").replace("_", " ")
+
+    if op == "!=":
+        # Flip to ==: "deny if field equals bad_value" (blocklist)
+        flip_comp_line = comp_line.replace(f'!= "{old_value}"', f'== "{flip_val}"')
+        flip_msg = (
+            f'msg := sprintf("{leaf_desc} has forbidden value %v", [{field_expr}])'
+        )
+        flip_rule = _replace_comparison_in_rule(rule_code, comp_line, flip_comp_line)
+        flip_rule = _swap_msg_in_rule(flip_rule, msg_line, flip_msg) or flip_rule
+
+        # Positive: must NOT have flip_val (so == doesn't fire)
+        flip_pos = "VALID_VALUE" if cur_pos == flip_val else None
+        # Negative: must have flip_val (so == fires)
+        flip_neg = flip_val
+
+        instr_text = (
+            f"Write a Rego deny rule that denies if any "
+            f"`{_short_field(field_expr)}` "
+            f'equals `"{flip_val}"`. '
+            f"(Blocklist check — deny when a bad value is found.)"
+        )
+        directive_note = (
+            f"This is the OPPOSITE pattern from the original rule.  "
+            f'Instead of "deny if not X" (allowlist), the user wants '
+            f'"deny if equals {flip_val}" (blocklist).  I flip the '
+            f"operator from != to == and adjust the deny message."
+        )
+
+    else:  # op == "=="
+        # Flip to !=: "deny if field is not expected_value" (allowlist)
+        flip_comp_line = comp_line.replace(f'== "{old_value}"', f'!= "{flip_val}"')
+        flip_msg = (
+            f'msg := sprintf("{leaf_desc} is %v, expected {flip_val}", [{field_expr}])'
+        )
+        flip_rule = _replace_comparison_in_rule(rule_code, comp_line, flip_comp_line)
+        flip_rule = _swap_msg_in_rule(flip_rule, msg_line, flip_msg) or flip_rule
+
+        # Positive: must have flip_val (so != doesn't fire)
+        flip_pos = flip_val
+        # Negative: must NOT have flip_val (so != fires)
+        flip_neg = "INVALID_VALUE" if cur_neg == flip_val else None
+
+        instr_text = (
+            f"Write a Rego deny rule that rejects if "
+            f"`{_short_field(field_expr)}` "
+            f'is not `"{flip_val}"`. '
+            f"(Allowlist check — deny when value doesn't match expected.)"
+        )
+        directive_note = (
+            f"This is the OPPOSITE pattern from the original rule.  "
+            f'Instead of "deny if equals X" (blocklist), the user wants '
+            f'"deny if not {flip_val}" (allowlist).  I flip the '
+            f"operator from == to != and adjust the deny message."
+        )
+
+    flip_test = _set_test_values(test_code, leaf_key, flip_pos, flip_neg)
+
+    variants.append({
+        "instruction": instr_text,
+        "modified_rule": flip_rule,
+        "modified_test": flip_test,
+        "directive_note": directive_note,
+        "sub_variant": "operator_flip",
+    })
+
+    return variants
+
+
+def _think_for_custom_value(
+    directive_note: str,
+    instr_rec: dict,
+    modified_rule: str,
+) -> str:
+    """Build a <think> trace for custom-value / operator-flip variants."""
+    parsed = _parse_first_deny_block(modified_rule)
+    if parsed is None:
+        return directive_note
+
+    lines: list[str] = ["Breaking down the request:"]
+
+    # DATA
+    data_parts = [
+        l for l in parsed["body_lines"]
+        if l.startswith("some ") or (":=" in l and not l.startswith("msg"))
+    ]
+    if data_parts:
+        lines.append("")
+        lines.append("DATA (what to access/iterate):")
+        for dp in data_parts:
+            lines.append(f"  - `{dp}`")
+
+    # CONDITION
+    cond_parts = [
+        l for l in parsed["body_lines"]
+        if not l.startswith("some ") and ":=" not in l
+    ]
+    if cond_parts:
+        lines.append("")
+        lines.append("CONDITION (what to check):")
+        for cp in cond_parts:
+            lines.append(f"  - `{cp}`")
+
+    # Value reasoning
+    lines.append("")
+    lines.append("VALUE / OPERATOR reasoning:")
+    lines.append(f"  {directive_note}")
+
+    lines.append("")
+    tier = instr_rec["tier"]
+    if tier == 1:
+        lines.append(
+            "Pattern: `deny contains msg if { <condition>; msg := ... }`"
+        )
+    elif tier == 2:
+        lines.append(
+            "I need to iterate with `some item in collection` and check each "
+            "element against the specified value."
+        )
+    else:
+        lines.append(
+            "This is a composite check — I'll structure the logic step by "
+            "step with the specified value/operator."
+        )
+
+    return "\n".join(lines)
+
+
+# ===========================================================================
+# Compositional variants — rule decomposition & return directives
+# ===========================================================================
+# Every deny rule = DATA + CONDITION + RETURN.  These variants teach the
+# model to vary the RETURN component based on explicit user directives
+# ("Return only the task name", "Include X and Y in the message", etc.)
+# while keeping DATA and CONDITION identical.
+
+def _parse_first_deny_block(rule_code: str) -> dict | None:
+    """Parse the first ``deny contains msg if { ... }`` block.
+
+    Returns a dict with:
+      msg_line        – the ``msg := ...`` line (unindented)
+      body_lines      – all other body lines (unindented)
+      iterators       – [(var_name, iter_type), ...]
+    or None if the rule can't be parsed.
+    """
+    m = re.search(
+        r'deny contains msg if \{(.*?)^\}',
+        rule_code, re.DOTALL | re.MULTILINE,
+    )
+    if not m:
+        return None
+
+    body_raw = m.group(1)
+    lines = [l.strip() for l in body_raw.split('\n') if l.strip()]
+
+    msg_line = None
+    body_lines: list[str] = []
+    for line in lines:
+        if line.startswith('msg :='):
+            msg_line = line
+        else:
+            body_lines.append(line)
+
+    if msg_line is None:
+        return None
+
+    # Detect iterators
+    iterators: list[tuple[str, str]] = []
+    for line in body_lines:
+        m2 = re.match(r'some (\w+) in (.+)', line)
+        if m2:
+            var_name = m2.group(1)
+            collection = m2.group(2).strip()
+            iterators.append((var_name, _classify_collection(collection)))
+
+    return {
+        'msg_line': msg_line,
+        'body_lines': body_lines,
+        'iterators': iterators,
+    }
+
+
+def _classify_collection(collection: str) -> str:
+    """Map a collection expression to a semantic type."""
+    if 'buildConfig.tasks' in collection:
+        return 'task'
+    if 'materials' in collection:
+        return 'material'
+    if 'subject' in collection:
+        return 'subject'
+    if '.results' in collection:
+        return 'result'
+    if '.steps' in collection:
+        return 'step'
+    if '.params' in collection:
+        return 'param'
+    return 'unknown'
+
+
+# Fields available on each iterator type for alternative sprintf args
+_ITER_FIELDS: dict[str, list[tuple[str, str]]] = {
+    "task": [
+        (".name", "task name"),
+        (".status", "task status"),
+    ],
+    "material": [
+        (".uri", "material URI"),
+        (".digest.sha256", "material digest"),
+    ],
+    "subject": [
+        (".name", "subject name"),
+        (".digest.sha256", "subject digest"),
+    ],
+    "result": [
+        (".name", "result name"),
+        (".type", "result type"),
+        (".value", "result value"),
+    ],
+    "param": [
+        (".name", "parameter name"),
+        (".value", "parameter value"),
+    ],
+    "step": [
+        (".entryPoint", "step entry point"),
+    ],
+}
+
+
+def _swap_msg_in_rule(rule_code: str, old_msg: str, new_msg: str) -> str | None:
+    """Replace the msg line in the first deny block.  Returns None on failure."""
+    # Rule files use tab indentation
+    old_indented = f'\t{old_msg}'
+    new_indented = f'\t{new_msg}'
+    if old_indented in rule_code:
+        return rule_code.replace(old_indented, new_indented, 1)
+    return None
+
+
+def _generate_return_directive_variants(
+    instr_rec: dict, rule_code: str,
+) -> list[dict]:
+    """Generate return-directive variants for one task.
+
+    Returns up to 3 dicts, each with:
+      instruction    – the user prompt (canonical + return directive)
+      modified_rule  – the rule with only the msg line changed
+      directive_note – text for the <think> trace explaining the directive
+    """
+    parsed = _parse_first_deny_block(rule_code)
+    if parsed is None:
+        return []
+
+    canonical = instr_rec["instruction"]
+    pkg = instr_rec["package_name"]
+    msg_line = parsed["msg_line"]
+    iterators = parsed["iterators"]
+
+    # ── Build set of negated field paths (undefined when rule fires) ─────
+    negated: set[str] = set()
+    for line in parsed["body_lines"]:
+        m = re.match(r'not\s+([\w.]+)', line)
+        if m:
+            negated.add(m.group(1))
+
+    # ── Collect all in-scope (field_expr, field_desc) pairs ──────────────
+    available: list[tuple[str, str]] = []
+    for var_name, iter_type in iterators:
+        for suffix, desc in _ITER_FIELDS.get(iter_type, []):
+            expr = f"{var_name}{suffix}"
+            # Skip fields that are negated (or whose parent is negated)
+            if any(expr == n or expr.startswith(n + ".") for n in negated):
+                continue
+            available.append((expr, desc))
+
+    # For non-iterator rules, prefer assignment variables (e.g. url := ...)
+    # over raw input paths to avoid quoting issues in sprintf.
+    if not iterators:
+        found = False
+        for line in parsed["body_lines"]:
+            m2 = re.match(r'(\w+)\s*:=\s*input\.', line)
+            if m2:
+                var = m2.group(1)
+                available.append((var, var))
+                found = True
+                break
+        if not found:
+            for line in parsed["body_lines"]:
+                m3 = re.search(r'(input\.[a-zA-Z0-9_.]+)', line)
+                if m3:
+                    expr = m3.group(1)
+                    leaf = expr.split(".")[-1]
+                    available.append((expr, leaf))
+                    break
+
+    # Apply negation filter to ALL available fields (iterator + non-iterator).
+    # Fields that are negated (or whose parent is negated) are undefined when
+    # the rule fires, so they cannot appear in sprintf.
+    available = [
+        (expr, desc) for expr, desc in available
+        if not any(expr == n or expr.startswith(n + ".") for n in negated)
+    ]
+
+    if not available:
+        return []
+
+    variants: list[dict] = []
+
+    # ── Variant 1: minimal return (single field) ────────────────────────
+    # Pick a field that is NOT already the sole content of the message,
+    # so the model learns something new.
+    for field_expr, field_desc in available:
+        if field_expr not in msg_line or msg_line.count('%v') > 1:
+            new_msg = f'msg := sprintf("{field_desc}: %v", [{field_expr}])'
+            new_rule = _swap_msg_in_rule(rule_code, msg_line, new_msg)
+            if new_rule:
+                variants.append({
+                    "instruction": (
+                        f"{canonical} Return only the {field_desc} "
+                        f"in the deny message."
+                    ),
+                    "modified_rule": new_rule,
+                    "directive_note": (
+                        f"The user wants only the {field_desc} in the "
+                        f"deny message. I'll use sprintf with [{field_expr}]."
+                    ),
+                })
+                break
+
+    # ── Variant 2: multi-field return ────────────────────────────────────
+    if len(available) >= 2:
+        f1_expr, f1_desc = available[0]
+        f2_expr, f2_desc = available[1]
+        new_msg = (
+            f'msg := sprintf("{f1_desc} %v, {f2_desc} %v", '
+            f'[{f1_expr}, {f2_expr}])'
+        )
+        new_rule = _swap_msg_in_rule(rule_code, msg_line, new_msg)
+        if new_rule:
+            variants.append({
+                "instruction": (
+                    f"{canonical} Include both the {f1_desc} and "
+                    f"the {f2_desc} in the deny message."
+                ),
+                "modified_rule": new_rule,
+                "directive_note": (
+                    f"The user wants both {f1_desc} and {f2_desc}. "
+                    f"I'll include [{f1_expr}, {f2_expr}] in sprintf."
+                ),
+            })
+
+    # ── Variant 3: custom static message ─────────────────────────────────
+    static_text = f"{pkg.replace('_', ' ')} policy violation"
+    new_msg = f'msg := "{static_text}"'
+    new_rule = _swap_msg_in_rule(rule_code, msg_line, new_msg)
+    if new_rule:
+        variants.append({
+            "instruction": (
+                f'{canonical} Use this exact deny message: '
+                f'"{static_text}"'
+            ),
+            "modified_rule": new_rule,
+            "directive_note": (
+                f'The user specified a static deny message: '
+                f'"{static_text}". No sprintf needed — a plain '
+                f'string literal.'
+            ),
+        })
+
+    return variants[:3]
+
+
+def _think_for_compositional(
+    directive_note: str,
+    instr_rec: dict,
+    modified_rule: str,
+) -> str:
+    """Build a <think> trace that decomposes the rule into DATA / CONDITION / RETURN."""
+    parsed = _parse_first_deny_block(modified_rule)
+    if parsed is None:
+        return directive_note
+
+    lines: list[str] = ["Breaking down the request:"]
+
+    # DATA
+    data_parts = [
+        l for l in parsed["body_lines"]
+        if l.startswith("some ") or (":=" in l and not l.startswith("msg"))
+    ]
+    if data_parts:
+        lines.append("")
+        lines.append("DATA (what to access/iterate):")
+        for dp in data_parts:
+            lines.append(f"  - `{dp}`")
+
+    # CONDITION
+    cond_parts = [
+        l for l in parsed["body_lines"]
+        if not l.startswith("some ") and ":=" not in l
+    ]
+    if cond_parts:
+        lines.append("")
+        lines.append("CONDITION (what to check):")
+        for cp in cond_parts:
+            lines.append(f"  - `{cp}`")
+
+    # RETURN (user directive)
+    lines.append("")
+    lines.append("RETURN (user directive):")
+    lines.append(f"  {directive_note}")
+
+    lines.append("")
+    tier = instr_rec["tier"]
+    if tier == 1:
+        lines.append(
+            "Pattern: `deny contains msg if { <condition>; msg := ... }`"
+        )
+    elif tier == 2:
+        lines.append(
+            "I need to iterate with `some item in collection` and check each "
+            "element, using the specified message format."
+        )
+    else:
+        lines.append(
+            "This is a composite check — I'll structure the logic step by "
+            "step and use the specified return format."
+        )
+
+    return "\n".join(lines)
+
+
+# ===========================================================================
 # Ambiguous prompt definitions — teach schema disambiguation
 # ===========================================================================
 # Each entry maps a task_id to a list of (ambiguous_prompt, disambiguation_note)
@@ -1263,6 +1967,89 @@ def assemble() -> list[dict]:
                 })
                 ambig_count += 1
 
+    # --- Compositional: return directive variants ---
+    # Teach the model that DATA + CONDITION + RETURN are independent.
+    # Same rule logic, different msg line based on user directive.
+    comp_count = 0
+    for instr_rec in instructions:
+        task_id = instr_rec["id"]
+        pkg = instr_rec["package_name"]
+        tier = instr_rec["tier"]
+
+        result = load_phase3_result(task_id)
+        if result is None:
+            continue
+
+        rule_path = PHASE3_TASKS / task_id / f"{pkg}.rego"
+        test_path = PHASE3_TASKS / task_id / f"{pkg}_test.rego"
+        if not rule_path.exists() or not test_path.exists():
+            continue
+
+        rule_code = load_file(rule_path)
+
+        for variant_rec in _generate_return_directive_variants(instr_rec, rule_code):
+            think = _think_for_compositional(
+                variant_rec["directive_note"],
+                instr_rec,
+                variant_rec["modified_rule"],
+            )
+            messages = make_messages(
+                variant_rec["instruction"],
+                variant_rec["modified_rule"].strip(),
+                think,
+            )
+            examples.append({
+                "messages": messages,
+                "task_id": task_id,
+                "tier": tier,
+                "variant": "return_directive",
+                "type": "rule_only",
+            })
+            comp_count += 1
+
+    # --- Compositional: custom value & operator flip variants ---
+    # Teach the model to vary the CONDITION axis: different literal values
+    # and flipped operators (!=→== / ==→!=).
+    cv_count = 0
+    for instr_rec in instructions:
+        task_id = instr_rec["id"]
+        pkg = instr_rec["package_name"]
+        tier = instr_rec["tier"]
+
+        result = load_phase3_result(task_id)
+        if result is None:
+            continue
+
+        rule_path = PHASE3_TASKS / task_id / f"{pkg}.rego"
+        test_path = PHASE3_TASKS / task_id / f"{pkg}_test.rego"
+        if not rule_path.exists() or not test_path.exists():
+            continue
+
+        rule_code = load_file(rule_path)
+        test_code = load_file(test_path)
+
+        for variant_rec in _generate_custom_value_variants(
+            instr_rec, rule_code, test_code,
+        ):
+            think = _think_for_custom_value(
+                variant_rec["directive_note"],
+                instr_rec,
+                variant_rec["modified_rule"],
+            )
+            messages = make_messages(
+                variant_rec["instruction"],
+                variant_rec["modified_rule"].strip(),
+                think,
+            )
+            examples.append({
+                "messages": messages,
+                "task_id": task_id,
+                "tier": tier,
+                "variant": f"custom_value_{variant_rec['sub_variant']}",
+                "type": "rule_only",
+            })
+            cv_count += 1
+
     # --- Phase 5: Rule-modification examples ---
     modifications = load_modifications()
     mod_count = 0
@@ -1287,6 +2074,8 @@ def assemble() -> list[dict]:
     print(f"Tasks used:     {len(instructions) - skipped}")
     print(f"Write/reversal: {write_and_reversal_count}")
     print(f"Ambiguous:      {ambig_count}")
+    print(f"Compositional:  {comp_count}")
+    print(f"Custom value:   {cv_count}")
     print(f"Modifications:  {len(modifications)} records × 3 variants = {mod_count}")
     print(f"Total examples: {len(examples)}")
 
