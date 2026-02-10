@@ -140,6 +140,8 @@ def parse_args() -> argparse.Namespace:
                     help="Build dataset and print config without training.")
     p.add_argument("--no-unsloth", action="store_true",
                     help="Use standard HF/TRL instead of Unsloth (slower, more VRAM).")
+    p.add_argument("--log-every", type=int, default=5,
+                    help="Print a console summary every N steps.")
 
     return p.parse_args()
 
@@ -362,9 +364,18 @@ def main() -> None:
     print(f"{'='*60}")
 
     # ------------------------------------------------------------------
-    # Import reward functions
+    # Import reward functions + wrap with logger
     # ------------------------------------------------------------------
     from grpo.rewards import ALL_REWARD_FUNCS
+    from grpo.logging_utils import StepLogger
+
+    step_logger = StepLogger(
+        log_dir=args.output_dir,
+        console_every=args.log_every,
+    )
+    reward_funcs = step_logger.wrap_reward_funcs(ALL_REWARD_FUNCS)
+    print(f"\n  Step logging enabled → {step_logger.log_file}")
+    print(f"  Console summary every {args.log_every} steps")
 
     # ------------------------------------------------------------------
     # Configure GRPO trainer
@@ -430,9 +441,10 @@ def main() -> None:
     trainer_kwargs = {
         "model": model,
         "processing_class": tokenizer,
-        "reward_funcs": ALL_REWARD_FUNCS,
+        "reward_funcs": reward_funcs,
         "args": training_args,
         "train_dataset": dataset,
+        "callbacks": [step_logger.make_callback()],
     }
 
     if peft_config is not None:
@@ -458,10 +470,17 @@ def main() -> None:
         json.dump(vars(args), f, indent=2)
 
     print(f"  Config saved to {config_path}")
-    print("\nDone! ✓")
+
+    # ------------------------------------------------------------------
+    # Training summary
+    # ------------------------------------------------------------------
+    step_logger.print_final_summary()
+
+    print("Done! ✓")
     print(f"\n  Pipeline complete:")
     print(f"    1. SFT model:  {args.sft_model}")
     print(f"    2. GRPO model: {args.output_dir}")
+    print(f"    3. Step log:   {step_logger.log_file}")
 
 
 if __name__ == "__main__":

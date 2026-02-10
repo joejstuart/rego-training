@@ -108,33 +108,35 @@ def reward_format(completions, **kwargs) -> list[float]:
     """Reward structural compliance with Rego deny-rule conventions.
 
     Checks for:
-      - ``<think>`` / ``</think>`` tags  (+0.5 each, -0.5 if missing)
-      - ``package`` declaration           (+1.0, -2.0 if missing — critical)
-      - ``import rego.v1``                (+0.5, -1.0 if missing)
-      - ``deny contains msg if``          (+2.0, -3.0 if missing — critical)
-      - ``sprintf``                       (+0.5, no penalty if missing)
+      - ``<think>`` / ``</think>`` tags  (+0.5 each, -0.5 if missing)  — checked on full response
+      - ``package`` declaration           (+1.0, -2.0 if missing)      — checked on CODE only
+      - ``import rego.v1``                (+0.5, -1.0 if missing)      — checked on CODE only
+      - ``deny contains msg if``          (+2.0, -3.0 if missing)      — checked on CODE only
+      - ``sprintf``                       (+0.5, no penalty if missing) — checked on CODE only
 
     Max: +5.0, Min: -7.0.
 
-    ``package`` and ``deny contains msg if`` carry the heaviest penalties
-    because missing them means the output is not valid Rego v1.
+    IMPORTANT: Code-structure checks use the extracted code (after ``</think>``),
+    NOT the full response. This prevents the model from gaming the reward by
+    mentioning patterns in ``<think>`` traces without using them in the code.
     """
     scores = []
     for completion in completions:
         response = completion[0]["content"]
+        code = _extract_rego_code(response) or ""
         score = 0.0
 
-        # Reasoning traces
+        # Reasoning traces — check full response (these ARE about the response structure)
         score += 0.5 if "<think>" in response or response.startswith("") else -0.5
         score += 0.5 if "</think>" in response else -0.5
 
-        # Critical structural elements (heavy penalties if missing)
-        score += 1.0 if re.search(r"^package\s+\w+", response, re.M) else -2.0
-        score += 0.5 if "import rego.v1" in response else -1.0
-        score += 2.0 if "deny contains msg if" in response else -3.0
+        # Critical structural elements — check CODE only (prevents think-tag gaming)
+        score += 1.0 if re.search(r"^package\s+\w+", code, re.M) else -2.0
+        score += 0.5 if "import rego.v1" in code else -1.0
+        score += 2.0 if "deny contains msg if" in code else -3.0
 
-        # Nice-to-have
-        score += 0.5 if "sprintf" in response else 0.0
+        # Nice-to-have — check CODE only
+        score += 0.5 if "sprintf" in code else 0.0
 
         scores.append(score)
     return scores
