@@ -88,6 +88,8 @@ import argparse
 import json
 import os
 import shutil
+import sys
+import types
 from importlib import metadata
 from pathlib import Path
 
@@ -156,6 +158,36 @@ def _safe_pkg_version(name: str) -> str:
         return "not installed"
     except Exception:
         return "unknown"
+
+
+def _ensure_vllm_guided_decoding_symbol() -> None:
+    """
+    Make TRL import robust when vLLM is installed but missing
+    `GuidedDecodingParams` (seen with newer/older vLLM mismatches).
+
+    TRL imports this symbol at module import time, even when use_vllm=False.
+    We provide a minimal stub so non-vLLM training paths can proceed.
+    """
+    try:
+        import vllm.sampling_params as sp  # type: ignore
+        if hasattr(sp, "GuidedDecodingParams"):
+            return
+        print("WARNING: vLLM missing GuidedDecodingParams; injecting compatibility stub.")
+
+        class GuidedDecodingParams:  # noqa: N801 - match upstream symbol name
+            pass
+
+        sp.GuidedDecodingParams = GuidedDecodingParams
+    except Exception:
+        # vLLM absent or import failed; provide a minimal module stub so TRL's
+        # optional import path does not hard-fail.
+        mod = types.ModuleType("vllm.sampling_params")
+
+        class GuidedDecodingParams:  # noqa: N801 - match upstream symbol name
+            pass
+
+        mod.GuidedDecodingParams = GuidedDecodingParams
+        sys.modules["vllm.sampling_params"] = mod
 
 
 # ===========================================================================
@@ -600,6 +632,9 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Configure GRPO trainer
     # ------------------------------------------------------------------
+    # TRL may import vLLM symbols at module import time, even if we disable
+    # vLLM for this run. Patch missing symbols for compatibility.
+    _ensure_vllm_guided_decoding_symbol()
     from trl import GRPOConfig, GRPOTrainer
 
     # NOTE: vLLM is disabled for GRPO training (fast_inference=False) due to
