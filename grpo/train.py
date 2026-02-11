@@ -9,7 +9,7 @@ Architecture (adapted from the Unsloth Qwen3-4B GRPO notebook):
   - Loads the SFT-trained model (LoRA or merged)
   - Reads a pre-built GRPO dataset (grpo/output/grpo_prompts.jsonl)
   - Uses 5 stacked reward functions scored by OPA / Regal evaluation
-  - Runs GRPOTrainer from TRL with vLLM fast inference
+  - Runs GRPOTrainer from TRL with Unsloth (vLLM disabled due to tensor shape bugs)
 
 ─── How rewards affect model weights (the GRPO algorithm) ────────────────
 
@@ -389,41 +389,20 @@ def main() -> None:
             unsloth_model_path = args.sft_model
 
         # Now load the full (merged) model with Unsloth.
-        # fast_inference=True uses vLLM for generation (much faster), but
-        # requires a compatible vLLM version.  Try it first, fall back to
-        # Unsloth-only if vLLM is missing or has a version mismatch.
-        _has_vllm = __import__("importlib").util.find_spec("vllm") is not None
-
-        model = None
-        if _has_vllm:
-            try:
-                print("  Trying Unsloth + vLLM (fast_inference=True)...")
-                model, tokenizer = FastLanguageModel.from_pretrained(
-                    model_name=unsloth_model_path,
-                    max_seq_length=args.max_seq_length,
-                    load_in_4bit=False,
-                    fast_inference=True,
-                    max_lora_rank=args.lora_rank,
-                    gpu_memory_utilization=0.9,
-                )
-                print("  vLLM loaded successfully — fast generation enabled.")
-            except (RuntimeError, ImportError, TypeError) as e:
-                print(f"  WARNING: vLLM failed to initialise: {e}")
-                print("  Falling back to Unsloth without vLLM (still faster than --no-unsloth).")
-                print("  To fix: pip install 'unsloth[vllm]' or align vllm/unsloth versions.")
-                model = None
-                torch.cuda.empty_cache()
-
-        if model is None:
-            if not _has_vllm:
-                print("  vLLM not installed — using Unsloth without fast inference.")
-                print("  Install for ~2-3x faster generation: pip install vllm")
-            model, tokenizer = FastLanguageModel.from_pretrained(
-                model_name=unsloth_model_path,
-                max_seq_length=args.max_seq_length,
-                load_in_4bit=False,
-                fast_inference=False,
-            )
+        # NOTE: vLLM (fast_inference=True) is DISABLED for GRPO training due to
+        # known tensor shape mismatch bugs in Unsloth's GRPOTrainer when using
+        # vLLM. The issue manifests as "RuntimeError: The size of tensor a (X)
+        # must match the size of tensor b (Y)" in masked_batch_mean operations.
+        # Using fast_inference=False (Unsloth-only) avoids this issue.
+        # See: https://github.com/unslothai/unsloth/issues/1958
+        #      https://github.com/unslothai/unsloth/issues/1855
+        print("  Using Unsloth without vLLM for GRPO training (vLLM has known tensor shape bugs).")
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=unsloth_model_path,
+            max_seq_length=args.max_seq_length,
+            load_in_4bit=False,
+            fast_inference=False,  # Disabled for GRPO to avoid tensor shape mismatches
+        )
 
         # Add a fresh GRPO LoRA adapter on top of the merged model
         model = FastLanguageModel.get_peft_model(
@@ -557,11 +536,10 @@ def main() -> None:
     # ------------------------------------------------------------------
     from trl import GRPOConfig, GRPOTrainer
 
-    # NOTE: We intentionally do NOT pass custom vllm_sampling_params.
-    # Unsloth's GRPOTrainer manages vLLM generation internally and uses
-    # max_completion_length from GRPOConfig to set the token limit.
-    # Passing our own SamplingParams can cause a tensor size mismatch
-    # between the completion and the completion_mask in compute_loss.
+    # NOTE: vLLM is disabled for GRPO training (fast_inference=False) due to
+    # known tensor shape mismatch bugs in Unsloth's GRPOTrainer. We use
+    # Unsloth-only generation which is slower but stable. The max_completion_length
+    # in GRPOConfig controls the generation limit.
     vllm_sampling_params = None
 
     # ------------------------------------------------------------------
@@ -599,8 +577,8 @@ def main() -> None:
     training_args = GRPOConfig(
         output_dir=args.output_dir,
 
-        # vLLM (only with Unsloth)
         # ── Generation parameters ──
+        # NOTE: vLLM is disabled for GRPO training to avoid tensor shape bugs.
         # temperature controls randomness in sampling.  0.7 is a balance:
         # high enough that the N completions are diverse (so their rewards
         # differ → learning signal exists), low enough to stay coherent.
