@@ -201,6 +201,13 @@ def parse_args() -> argparse.Namespace:
                          "Recommended if you encounter tensor size mismatch errors with Unsloth.")
     p.add_argument("--log-every", type=int, default=5,
                     help="Print a console summary every N steps.")
+    p.add_argument("--completion-length-buffer", type=int, default=32,
+                    help="Extra tokens added to max_completion_length to absorb "
+                         "tokenizer/template drift between preprocessing and GRPO internals.")
+    p.add_argument("--max-prompt-length-override", type=int, default=0,
+                    help="If > 0, force this max_prompt_length instead of auto-computed value.")
+    p.add_argument("--max-completion-length-override", type=int, default=0,
+                    help="If > 0, force this max_completion_length instead of auto-computed value.")
 
     return p.parse_args()
 
@@ -489,7 +496,15 @@ def main() -> None:
     # completion_mask tensors (a known issue in some Unsloth versions).
     # The +10 buffer accounts for potential padding/alignment differences.
     max_prompt_length = actual_max_length + 10
-    max_completion_length = args.max_seq_length - max_prompt_length
+    if args.max_prompt_length_override > 0:
+        max_prompt_length = args.max_prompt_length_override
+
+    base_completion_length = args.max_seq_length - max_prompt_length
+    # Buffer absorbs template/tokenization drift between our prompt-length
+    # estimate and what GRPOTrainer internally uses to derive completion tensors.
+    max_completion_length = base_completion_length + args.completion_length_buffer
+    if args.max_completion_length_override > 0:
+        max_completion_length = args.max_completion_length_override
     
     # Ensure completion length is reasonable (at least 100 tokens)
     if max_completion_length < 100:
@@ -499,6 +514,8 @@ def main() -> None:
     
     print(f"  Actual max prompt length:     {actual_max_length} tokens")
     print(f"  Max prompt length (buffered): {max_prompt_length} tokens")
+    print(f"  Base completion length:       {base_completion_length} tokens")
+    print(f"  Completion buffer:            +{args.completion_length_buffer} tokens")
     if len(filtered_prompt_lengths):
         print(f"  Prompt length stats:          min={int(filtered_prompt_lengths.min())} "
               f"p50={int(np.quantile(filtered_prompt_lengths, 0.5))} "
