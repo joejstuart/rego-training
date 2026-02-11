@@ -186,7 +186,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true",
                     help="Build dataset and print config without training.")
     p.add_argument("--no-unsloth", action="store_true",
-                    help="Use standard HF/TRL instead of Unsloth (slower, more VRAM).")
+                    help="Use standard HF/TRL instead of Unsloth (slower, more VRAM). "
+                         "Recommended if you encounter tensor size mismatch errors with Unsloth.")
     p.add_argument("--log-every", type=int, default=5,
                     help="Print a console summary every N steps.")
 
@@ -340,7 +341,11 @@ def main() -> None:
             bias="none",
         )
     else:
-        print(f"\nLoading model with Unsloth (fast inference)...")
+        print(f"\n{'='*60}")
+        print(f"  WARNING: Unsloth GRPOTrainer has known tensor shape bugs")
+        print(f"  If training fails with 'tensor size mismatch', use --no-unsloth")
+        print(f"{'='*60}")
+        print(f"\nLoading model with Unsloth...")
         from unsloth import FastLanguageModel
 
         # Unsloth needs a FULL model, not a LoRA adapter.  If the SFT
@@ -389,14 +394,16 @@ def main() -> None:
             unsloth_model_path = args.sft_model
 
         # Now load the full (merged) model with Unsloth.
-        # NOTE: vLLM (fast_inference=True) is DISABLED for GRPO training due to
-        # known tensor shape mismatch bugs in Unsloth's GRPOTrainer when using
-        # vLLM. The issue manifests as "RuntimeError: The size of tensor a (X)
-        # must match the size of tensor b (Y)" in masked_batch_mean operations.
-        # Using fast_inference=False (Unsloth-only) avoids this issue.
+        # WARNING: Unsloth's GRPOTrainer has a known bug with tensor shape mismatches
+        # in completion_mask calculations, even without vLLM. If you encounter
+        # "RuntimeError: The size of tensor a (X) must match the size of tensor b (Y)",
+        # use --no-unsloth to bypass Unsloth and use standard HF/TRL instead.
         # See: https://github.com/unslothai/unsloth/issues/1958
         #      https://github.com/unslothai/unsloth/issues/1855
-        print("  Using Unsloth without vLLM for GRPO training (vLLM has known tensor shape bugs).")
+        #      https://github.com/unslothai/unsloth/issues/1642
+        print("  WARNING: Unsloth GRPOTrainer has known tensor shape bugs.")
+        print("  If you see 'tensor size mismatch' errors, use --no-unsloth flag.")
+        print("  Using Unsloth without vLLM (fast_inference=False)...")
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=unsloth_model_path,
             max_seq_length=args.max_seq_length,
