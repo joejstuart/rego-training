@@ -390,20 +390,40 @@ def main() -> None:
 
         # Now load the full (merged) model with Unsloth.
         # fast_inference=True uses vLLM for generation (much faster), but
-        # requires vLLM to be installed.  Fall back gracefully if missing.
-        _has_vllm = shutil.which("python") and __import__("importlib").util.find_spec("vllm") is not None
-        if not _has_vllm:
-            print("  WARNING: vLLM not installed — Unsloth will run without fast inference.")
-            print("  Install vLLM for ~2-3x faster generation: pip install vllm")
+        # requires a compatible vLLM version.  Try it first, fall back to
+        # Unsloth-only if vLLM is missing or has a version mismatch.
+        _has_vllm = __import__("importlib").util.find_spec("vllm") is not None
 
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=unsloth_model_path,
-            max_seq_length=args.max_seq_length,
-            load_in_4bit=False,
-            fast_inference=_has_vllm,
-            **( {"max_lora_rank": args.lora_rank, "gpu_memory_utilization": 0.9}
-                if _has_vllm else {}),
-        )
+        model = None
+        if _has_vllm:
+            try:
+                print("  Trying Unsloth + vLLM (fast_inference=True)...")
+                model, tokenizer = FastLanguageModel.from_pretrained(
+                    model_name=unsloth_model_path,
+                    max_seq_length=args.max_seq_length,
+                    load_in_4bit=False,
+                    fast_inference=True,
+                    max_lora_rank=args.lora_rank,
+                    gpu_memory_utilization=0.9,
+                )
+                print("  vLLM loaded successfully — fast generation enabled.")
+            except (RuntimeError, ImportError, TypeError) as e:
+                print(f"  WARNING: vLLM failed to initialise: {e}")
+                print("  Falling back to Unsloth without vLLM (still faster than --no-unsloth).")
+                print("  To fix: pip install 'unsloth[vllm]' or align vllm/unsloth versions.")
+                model = None
+                torch.cuda.empty_cache()
+
+        if model is None:
+            if not _has_vllm:
+                print("  vLLM not installed — using Unsloth without fast inference.")
+                print("  Install for ~2-3x faster generation: pip install vllm")
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                model_name=unsloth_model_path,
+                max_seq_length=args.max_seq_length,
+                load_in_4bit=False,
+                fast_inference=False,
+            )
 
         # Add a fresh GRPO LoRA adapter on top of the merged model
         model = FastLanguageModel.get_peft_model(
@@ -509,9 +529,13 @@ def main() -> None:
     # ------------------------------------------------------------------
     from trl import GRPOConfig, GRPOTrainer
 
-    # vLLM sampling params are only used when Unsloth + vLLM are both active.
-    _use_vllm = not args.no_unsloth and __import__("importlib").util.find_spec("vllm") is not None
-    if _use_vllm:
+    # vLLM sampling params are only used when vLLM actually loaded successfully.
+    # Check if the model has vLLM attached (fast_inference=True succeeded).
+    _vllm_active = hasattr(model, "vllm_engine") or hasattr(model, "_vllm_engine")
+    if not _vllm_active and not args.no_unsloth:
+        # Double-check: Unsloth may store it differently
+        _vllm_active = getattr(model, "fast_inference", False)
+    if _vllm_active:
         from vllm import SamplingParams
         vllm_sampling_params = SamplingParams(
             min_p=0.1,
@@ -520,6 +544,11 @@ def main() -> None:
             seed=args.seed,
             stop=[tokenizer.eos_token],
             include_stop_str_in_output=True,
+            # Cap generation length to match GRPOConfig.max_completion_length.
+            # Without this, vLLM may generate longer completions than the
+            # completion_mask expects, causing a tensor size mismatch in
+            # Unsloth's compute_loss.
+            max_tokens=max_completion_length,
         )
     else:
         vllm_sampling_params = None
