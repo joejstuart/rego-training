@@ -470,8 +470,17 @@ def main() -> None:
     )
     tokenized = tokenized.map(lambda x: {"L": len(x["tokens"])})
     all_prompt_lengths = np.array(tokenized["L"])
-    maximum_length = int(np.quantile(all_prompt_lengths, 0.9))
-    selected_indices = np.where(all_prompt_lengths <= maximum_length)[0]
+    p90_prompt_length = int(np.quantile(all_prompt_lengths, 0.9))
+
+    # Enforce a hard prompt-length cap on the DATA itself.
+    # Important: setting max_prompt_length in GRPOConfig alone does not
+    # guarantee the dataset prompts are truncated before trainer internals.
+    effective_prompt_cap = (
+        args.max_prompt_length_override
+        if args.max_prompt_length_override > 0
+        else p90_prompt_length
+    )
+    selected_indices = np.where(all_prompt_lengths <= effective_prompt_cap)[0]
     dataset = dataset.select(selected_indices)
     
     # Re-tokenize the filtered dataset to get the actual max length
@@ -487,7 +496,7 @@ def main() -> None:
     )
     tokenized_filtered = tokenized_filtered.map(lambda x: {"L": len(x["tokens"])})
     filtered_prompt_lengths = np.array(tokenized_filtered["L"])
-    actual_max_length = int(filtered_prompt_lengths.max()) if len(filtered_prompt_lengths) else maximum_length
+    actual_max_length = int(filtered_prompt_lengths.max()) if len(filtered_prompt_lengths) else effective_prompt_cap
     del tokenized, tokenized_filtered
 
     # Add safety margin: use actual max + small buffer to account for
@@ -495,9 +504,9 @@ def main() -> None:
     # This helps prevent tensor size mismatches between completion and
     # completion_mask tensors (a known issue in some Unsloth versions).
     # The +10 buffer accounts for potential padding/alignment differences.
-    max_prompt_length = actual_max_length + 10
-    if args.max_prompt_length_override > 0:
-        max_prompt_length = args.max_prompt_length_override
+    # Use the enforced data cap as trainer prompt cap to keep preprocessing
+    # and training aligned.
+    max_prompt_length = effective_prompt_cap
 
     base_completion_length = args.max_seq_length - max_prompt_length
     # Reserve headroom to absorb template/tokenization drift between our prompt
@@ -522,6 +531,8 @@ def main() -> None:
         max_completion_length = safe_completion
         total_budget = max_prompt_length + max_completion_length
 
+    print(f"  Auto prompt cap (p90):        {p90_prompt_length} tokens")
+    print(f"  Effective prompt cap:         {effective_prompt_cap} tokens")
     print(f"  Actual max prompt length:     {actual_max_length} tokens")
     print(f"  Max prompt length (buffered): {max_prompt_length} tokens")
     print(f"  Base completion length:       {base_completion_length} tokens")
@@ -535,7 +546,7 @@ def main() -> None:
               f"max={int(filtered_prompt_lengths.max())}")
 
     print(f"\n  Dataset after length filter: {len(dataset)} prompts")
-    print(f"  Max prompt length (p90):     {maximum_length} tokens")
+    print(f"  Max prompt length (p90):     {p90_prompt_length} tokens")
     print(f"  Max completion length:       {max_completion_length} tokens")
 
     save_every = max(args.max_steps // 4, 10)  # checkpoint ~4 times during training
