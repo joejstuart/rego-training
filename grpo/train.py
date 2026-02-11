@@ -388,25 +388,42 @@ def main() -> None:
             # SFT output is already a full merged model — use directly
             unsloth_model_path = args.sft_model
 
-        # Load with Unsloth.  We use fast_inference=False because Unsloth's
-        # vLLM integration (fast_inference=True) has a known bug: vLLM
-        # generates based on the *actual* prompt length, not max_prompt_length,
-        # so completions can exceed max_completion_length → tensor size
-        # mismatch in compute_loss.
-        #
-        # fast_inference=False still gives us Unsloth's key speedups:
-        #   • fused attention / RoPE / cross-entropy kernels
-        #   • smart gradient offloading (saves VRAM)
-        #   • optimised LoRA
-        # The only loss is that generation uses HF generate() instead of
-        # vLLM, which is slower but correctly respects max_new_tokens.
-        print("  Loading with Unsloth (fast_inference=False) ...")
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=unsloth_model_path,
-            max_seq_length=args.max_seq_length,
-            load_in_4bit=False,
-            fast_inference=False,
-        )
+        # Now load the full (merged) model with Unsloth.
+        # fast_inference=True uses vLLM for generation (much faster), but
+        # requires a compatible vLLM version.  Try it first, fall back to
+        # Unsloth-only if vLLM is missing or has a version mismatch.
+        _has_vllm = __import__("importlib").util.find_spec("vllm") is not None
+
+        model = None
+        if _has_vllm:
+            try:
+                print("  Trying Unsloth + vLLM (fast_inference=True)...")
+                model, tokenizer = FastLanguageModel.from_pretrained(
+                    model_name=unsloth_model_path,
+                    max_seq_length=args.max_seq_length,
+                    load_in_4bit=False,
+                    fast_inference=True,
+                    max_lora_rank=args.lora_rank,
+                    gpu_memory_utilization=0.9,
+                )
+                print("  vLLM loaded successfully — fast generation enabled.")
+            except (RuntimeError, ImportError, TypeError) as e:
+                print(f"  WARNING: vLLM failed to initialise: {e}")
+                print("  Falling back to Unsloth without vLLM (still faster than --no-unsloth).")
+                print("  To fix: pip install 'unsloth[vllm]' or align vllm/unsloth versions.")
+                model = None
+                torch.cuda.empty_cache()
+
+        if model is None:
+            if not _has_vllm:
+                print("  vLLM not installed — using Unsloth without fast inference.")
+                print("  Install for ~2-3x faster generation: pip install vllm")
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                model_name=unsloth_model_path,
+                max_seq_length=args.max_seq_length,
+                load_in_4bit=False,
+                fast_inference=False,
+            )
 
         # Add a fresh GRPO LoRA adapter on top of the merged model
         model = FastLanguageModel.get_peft_model(
@@ -450,10 +467,38 @@ def main() -> None:
     tokenized = tokenized.map(lambda x: {"L": len(x["tokens"])})
     maximum_length = int(np.quantile(tokenized["L"], 0.9))
     dataset = dataset.select(np.where(np.array(tokenized["L"]) <= maximum_length)[0])
-    del tokenized
+    
+    # Re-tokenize the filtered dataset to get the actual max length
+    # This ensures we use the real maximum, not just p90, which helps avoid
+    # tensor size mismatches in Unsloth's GRPOTrainer
+    tokenized_filtered = dataset.map(
+        lambda x: {
+            "tokens": tokenizer.apply_chat_template(
+                x["prompt"], add_generation_prompt=True, tokenize=True,
+            )
+        },
+        batched=True,
+    )
+    tokenized_filtered = tokenized_filtered.map(lambda x: {"L": len(x["tokens"])})
+    actual_max_length = max(tokenized_filtered["L"]) if tokenized_filtered["L"] else maximum_length
+    del tokenized, tokenized_filtered
 
-    max_prompt_length = maximum_length + 1
+    # Add safety margin: use actual max + small buffer to account for
+    # potential padding/alignment issues in Unsloth's GRPOTrainer.
+    # This helps prevent tensor size mismatches between completion and
+    # completion_mask tensors (a known issue in some Unsloth versions).
+    # The +10 buffer accounts for potential padding/alignment differences.
+    max_prompt_length = actual_max_length + 10
     max_completion_length = args.max_seq_length - max_prompt_length
+    
+    # Ensure completion length is reasonable (at least 100 tokens)
+    if max_completion_length < 100:
+        print(f"WARNING: max_completion_length ({max_completion_length}) is very small.")
+        print(f"         Consider increasing --max-seq-length or filtering longer prompts.")
+        max_completion_length = max(100, max_completion_length)
+    
+    print(f"  Actual max prompt length:     {actual_max_length} tokens")
+    print(f"  Max prompt length (buffered): {max_prompt_length} tokens")
 
     print(f"\n  Dataset after length filter: {len(dataset)} prompts")
     print(f"  Max prompt length (p90):     {maximum_length} tokens")
