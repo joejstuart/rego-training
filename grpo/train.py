@@ -88,6 +88,7 @@ import argparse
 import json
 import os
 import shutil
+from importlib import metadata
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -145,6 +146,16 @@ def _load_grpo_dataset() -> list[dict]:
             if line:
                 records.append(json.loads(line))
     return records
+
+
+def _safe_pkg_version(name: str) -> str:
+    """Return installed package version, or 'not installed' if unavailable."""
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return "not installed"
+    except Exception:
+        return "unknown"
 
 
 # ===========================================================================
@@ -451,8 +462,10 @@ def main() -> None:
         batched=True,
     )
     tokenized = tokenized.map(lambda x: {"L": len(x["tokens"])})
-    maximum_length = int(np.quantile(tokenized["L"], 0.9))
-    dataset = dataset.select(np.where(np.array(tokenized["L"]) <= maximum_length)[0])
+    all_prompt_lengths = np.array(tokenized["L"])
+    maximum_length = int(np.quantile(all_prompt_lengths, 0.9))
+    selected_indices = np.where(all_prompt_lengths <= maximum_length)[0]
+    dataset = dataset.select(selected_indices)
     
     # Re-tokenize the filtered dataset to get the actual max length
     # This ensures we use the real maximum, not just p90, which helps avoid
@@ -466,7 +479,8 @@ def main() -> None:
         batched=True,
     )
     tokenized_filtered = tokenized_filtered.map(lambda x: {"L": len(x["tokens"])})
-    actual_max_length = max(tokenized_filtered["L"]) if tokenized_filtered["L"] else maximum_length
+    filtered_prompt_lengths = np.array(tokenized_filtered["L"])
+    actual_max_length = int(filtered_prompt_lengths.max()) if len(filtered_prompt_lengths) else maximum_length
     del tokenized, tokenized_filtered
 
     # Add safety margin: use actual max + small buffer to account for
@@ -485,6 +499,12 @@ def main() -> None:
     
     print(f"  Actual max prompt length:     {actual_max_length} tokens")
     print(f"  Max prompt length (buffered): {max_prompt_length} tokens")
+    if len(filtered_prompt_lengths):
+        print(f"  Prompt length stats:          min={int(filtered_prompt_lengths.min())} "
+              f"p50={int(np.quantile(filtered_prompt_lengths, 0.5))} "
+              f"p90={int(np.quantile(filtered_prompt_lengths, 0.9))} "
+              f"p99={int(np.quantile(filtered_prompt_lengths, 0.99))} "
+              f"max={int(filtered_prompt_lengths.max())}")
 
     print(f"\n  Dataset after length filter: {len(dataset)} prompts")
     print(f"  Max prompt length (p90):     {maximum_length} tokens")
@@ -581,20 +601,20 @@ def main() -> None:
     # The result: tokens that appear in high-reward completions become more
     # likely; tokens in low-reward completions become less likely.
     # ------------------------------------------------------------------
-    training_args = GRPOConfig(
-        output_dir=args.output_dir,
+    grpo_config_kwargs = {
+        "output_dir": args.output_dir,
 
         # ── Generation parameters ──
         # NOTE: vLLM is disabled for GRPO training to avoid tensor shape bugs.
         # temperature controls randomness in sampling.  0.7 is a balance:
         # high enough that the N completions are diverse (so their rewards
         # differ → learning signal exists), low enough to stay coherent.
-        temperature=0.7,
-        max_prompt_length=max_prompt_length,
-        max_completion_length=max_completion_length,
+        "temperature": 0.7,
+        "max_prompt_length": max_prompt_length,
+        "max_completion_length": max_completion_length,
         # N completions per prompt — these form the "group" that GRPO
         # compares.  The variance in their rewards drives learning.
-        num_generations=args.num_generations,
+        "num_generations": args.num_generations,
 
         # ── KL penalty (β) ──
         # Penalises per-token divergence from the reference policy (the
@@ -604,30 +624,43 @@ def main() -> None:
         # behaviour on under-represented prompts.  0.10 is a safer
         # default that still allows improvement while preserving SFT
         # knowledge.
-        beta=0.10,
+        "beta": 0.10,
 
         # ── Optimiser ──
         # AdamW updates the LoRA weights using the policy-gradient loss.
-        learning_rate=args.lr,
-        weight_decay=0.001,
-        warmup_ratio=args.warmup_ratio,
-        lr_scheduler_type="linear",
-        optim="adamw_8bit",
-        bf16=True,
+        "learning_rate": args.lr,
+        "weight_decay": 0.001,
+        "warmup_ratio": args.warmup_ratio,
+        "lr_scheduler_type": "linear",
+        "optim": "adamw_8bit",
+        "bf16": True,
 
         # ── Batching ──
-        per_device_train_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.grad_accum,
+        "per_device_train_batch_size": args.batch_size,
+        "gradient_accumulation_steps": args.grad_accum,
 
         # Steps & logging
-        max_steps=args.max_steps,
-        save_steps=save_every,                 # intermediate checkpoints
-        logging_steps=1,
-        report_to="none",
+        "max_steps": args.max_steps,
+        "save_steps": save_every,                 # intermediate checkpoints
+        "logging_steps": 1,
+        "report_to": "none",
 
         # Misc
-        seed=args.seed,
-    )
+        "seed": args.seed,
+    }
+
+    try:
+        import inspect
+        config_params = inspect.signature(GRPOConfig.__init__).parameters
+        if "use_vllm" in config_params:
+            grpo_config_kwargs["use_vllm"] = False
+            print("  GRPOConfig: forcing use_vllm=False")
+        else:
+            print("  GRPOConfig: no `use_vllm` parameter in this TRL version")
+    except Exception as e:
+        print(f"  WARNING: could not inspect GRPOConfig signature: {e}")
+
+    training_args = GRPOConfig(**grpo_config_kwargs)
 
     # ------------------------------------------------------------------
     # Train
@@ -660,7 +693,53 @@ def main() -> None:
         trainer_kwargs["peft_config"] = peft_config
 
     trainer = GRPOTrainer(**trainer_kwargs)
-    trainer.train()
+
+    # Helpful env/version diagnostics for debugging library-level GRPO issues.
+    print("\n  Runtime versions:")
+    print(f"    torch:        {_safe_pkg_version('torch')}")
+    print(f"    transformers: {_safe_pkg_version('transformers')}")
+    print(f"    trl:          {_safe_pkg_version('trl')}")
+    print(f"    unsloth:      {_safe_pkg_version('unsloth')}")
+    print(f"    vllm:         {_safe_pkg_version('vllm')}")
+
+    try:
+        trainer.train()
+    except RuntimeError as e:
+        msg = str(e)
+        if "size of tensor a" in msg and "must match the size of tensor b" in msg:
+            print("\n" + "=" * 70)
+            print("GRPO tensor-shape mismatch diagnostics")
+            print("=" * 70)
+            print(f"  no_unsloth:          {args.no_unsloth}")
+            print(f"  max_seq_length:      {args.max_seq_length}")
+            print(f"  max_prompt_length:   {max_prompt_length}")
+            print(f"  max_completion_len:  {max_completion_length}")
+            if len(filtered_prompt_lengths):
+                print(f"  prompt_length min:   {int(filtered_prompt_lengths.min())}")
+                print(f"  prompt_length p50:   {int(np.quantile(filtered_prompt_lengths, 0.5))}")
+                print(f"  prompt_length p95:   {int(np.quantile(filtered_prompt_lengths, 0.95))}")
+                print(f"  prompt_length max:   {int(filtered_prompt_lengths.max())}")
+
+            # Show longest filtered prompts to help identify problematic samples.
+            if len(filtered_prompt_lengths) and len(selected_indices):
+                ranked = sorted(
+                    (
+                        int(filtered_prompt_lengths[i]),
+                        grpo_records[int(selected_indices[i])].get("task_id", "?"),
+                        grpo_records[int(selected_indices[i])].get("variant", "?"),
+                    )
+                    for i in range(len(filtered_prompt_lengths))
+                )[-5:]
+                print("  Longest prompts in filtered dataset:")
+                for L, tid, var in reversed(ranked):
+                    print(f"    len={L:4d}  task_id={tid}  variant={var}")
+
+            print("\n  Suggested next steps:")
+            print("    1) Retry with --no-unsloth (HF/TRL path)")
+            print("    2) Upgrade unsloth + trl to latest compatible versions")
+            print("    3) Reduce --max-seq-length (e.g. 1536) to narrow edge cases")
+            print("=" * 70 + "\n")
+        raise
 
     # ------------------------------------------------------------------
     # Save LoRA adapter
