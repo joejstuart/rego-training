@@ -202,8 +202,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--log-every", type=int, default=5,
                     help="Print a console summary every N steps.")
     p.add_argument("--completion-length-buffer", type=int, default=32,
-                    help="Extra tokens added to max_completion_length to absorb "
-                         "tokenizer/template drift between preprocessing and GRPO internals.")
+                    help="Reserved headroom tokens subtracted from available completion "
+                         "budget to avoid truncation and internal mask drift.")
     p.add_argument("--max-prompt-length-override", type=int, default=0,
                     help="If > 0, force this max_prompt_length instead of auto-computed value.")
     p.add_argument("--max-completion-length-override", type=int, default=0,
@@ -500,9 +500,9 @@ def main() -> None:
         max_prompt_length = args.max_prompt_length_override
 
     base_completion_length = args.max_seq_length - max_prompt_length
-    # Buffer absorbs template/tokenization drift between our prompt-length
-    # estimate and what GRPOTrainer internally uses to derive completion tensors.
-    max_completion_length = base_completion_length + args.completion_length_buffer
+    # Reserve headroom to absorb template/tokenization drift between our prompt
+    # estimate and what GRPOTrainer internally uses.
+    max_completion_length = base_completion_length - args.completion_length_buffer
     if args.max_completion_length_override > 0:
         max_completion_length = args.max_completion_length_override
     
@@ -512,10 +512,21 @@ def main() -> None:
         print(f"         Consider increasing --max-seq-length or filtering longer prompts.")
         max_completion_length = max(100, max_completion_length)
     
+    # Hard guardrail: never allow prompt+completion to exceed max_seq_length.
+    # If this happens, Unsloth truncates input_ids which can desync masks.
+    total_budget = max_prompt_length + max_completion_length
+    if total_budget >= args.max_seq_length:
+        safe_completion = max(100, args.max_seq_length - max_prompt_length - 1)
+        print("WARNING: prompt+completion budget exceeded max_seq_length.")
+        print(f"         Clamping max_completion_length {max_completion_length} -> {safe_completion}")
+        max_completion_length = safe_completion
+        total_budget = max_prompt_length + max_completion_length
+
     print(f"  Actual max prompt length:     {actual_max_length} tokens")
     print(f"  Max prompt length (buffered): {max_prompt_length} tokens")
     print(f"  Base completion length:       {base_completion_length} tokens")
-    print(f"  Completion buffer:            +{args.completion_length_buffer} tokens")
+    print(f"  Completion headroom:          -{args.completion_length_buffer} tokens")
+    print(f"  Prompt+completion budget:     {total_budget}/{args.max_seq_length}")
     if len(filtered_prompt_lengths):
         print(f"  Prompt length stats:          min={int(filtered_prompt_lengths.min())} "
               f"p50={int(np.quantile(filtered_prompt_lengths, 0.5))} "
