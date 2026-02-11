@@ -11,6 +11,46 @@ Architecture (adapted from the Unsloth Qwen3-4B GRPO notebook):
   - Uses 5 stacked reward functions scored by OPA / Regal evaluation
   - Runs GRPOTrainer from TRL with vLLM fast inference
 
+─── How rewards affect model weights (the GRPO algorithm) ────────────────
+
+  For each training step:
+
+  1. SAMPLE:  Pick a prompt from the dataset.
+
+  2. GENERATE:  Produce N completions (num_generations=4 by default) from the
+     current policy (the model).
+
+  3. SCORE:  Run every reward function on every completion. Each completion
+     gets a scalar reward = sum of all 5 function scores (range -17 to +15).
+
+  4. ADVANTAGE:  Compute a *group-relative advantage* for each completion:
+       advantage_i = (reward_i - mean(rewards)) / std(rewards)
+     Completions that scored above the group average get positive advantage;
+     those below get negative.  If all N completions score the same,
+     std ≈ 0 and there is NO learning signal for this step.
+
+  5. POLICY GRADIENT:  For each token in each completion, compute:
+       loss_token = -advantage * log π(token | context)
+     Positive advantage → the gradient *increases* the probability of those
+     tokens.  Negative advantage → the gradient *decreases* them.
+     This is the standard REINFORCE-style policy-gradient update.
+
+  6. KL PENALTY:  A small penalty (β=0.04) is added for each token that
+     diverges from the *reference policy* (the frozen SFT model):
+       kl_penalty = β * KL(π_current ‖ π_ref)
+     This prevents the model from drifting too far from what SFT taught it.
+
+  7. BACKPROP:  The combined loss (policy gradient + KL penalty) is
+     back-propagated through the LoRA adapter weights only (the base model
+     is frozen).  The optimizer (AdamW) updates the LoRA parameters.
+
+  Net effect over many steps: the model learns to produce completions that
+  score high on ALL five reward functions simultaneously, while staying
+  close to the SFT baseline.  Unlike PPO, GRPO needs no separate critic
+  network — the group of N completions *is* the baseline.
+
+──────────────────────────────────────────────────────────────────────────
+
 Reward functions (see grpo/rewards.py for implementation):
   1. reward_format        — structural compliance (<think>, package, deny pattern)
   2. reward_opa_parse     — syntactic validity via `opa check`
@@ -70,9 +110,16 @@ DEFAULTS = {
     "output_dir": DEFAULT_OUTPUT_DIR,
     "max_seq_length": 2048,
     "lora_rank": 32,
-    "max_steps": 100,
+    "max_steps": 600,
+    # num_generations: how many completions to generate per prompt.  GRPO
+    # compares these N outputs against each other — the spread in their
+    # rewards IS the learning signal.  More generations = richer signal but
+    # more compute per step.
     "num_generations": 4,
-    "batch_size": 4,              # must be >= num_generations (GRPO compares N completions per prompt)
+    # batch_size must be >= num_generations because each "sample" in the
+    # batch is one completion; a single prompt produces num_generations
+    # samples that must all fit in the same batch.
+    "batch_size": 4,
     "grad_accum": 1,
     "lr": 5e-6,
     "warmup_ratio": 0.1,
@@ -230,6 +277,13 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Load model (requires torch + GPU libraries)
     # ------------------------------------------------------------------
+    # We start from the SFT model (Stage 1) and add a NEW LoRA adapter on
+    # top.  Only these new LoRA weights will be updated by GRPO — the base
+    # model weights (including merged SFT knowledge) stay frozen.
+    # This is what allows the policy gradient (step 5-7 in the docstring)
+    # to update a small set of parameters while preserving everything SFT
+    # already learned.
+    # ------------------------------------------------------------------
     import torch
 
     if args.no_unsloth:
@@ -247,7 +301,9 @@ def main() -> None:
         is_lora = (sft_path / "adapter_config.json").exists()
 
         if is_lora:
-            # SFT output is a LoRA adapter — load base model, apply adapter, merge
+            # SFT output is a LoRA adapter — load base + SFT adapter, then
+            # merge them into one set of weights.  This "bakes in" SFT
+            # knowledge so GRPO can build on top of it.
             print(f"  SFT model is a LoRA adapter — loading base model {args.base_model}...")
             base_model = AutoModelForCausalLM.from_pretrained(
                 args.base_model,
@@ -259,7 +315,8 @@ def main() -> None:
             print(f"  Merging SFT LoRA into base weights...")
             model = model.merge_and_unload()
         else:
-            # SFT output is a full merged model
+            # SFT output is a full merged model — use it directly as our
+            # frozen base.
             print(f"  Loading merged SFT model from {args.sft_model}...")
             model = AutoModelForCausalLM.from_pretrained(
                 args.sft_model,
@@ -267,7 +324,10 @@ def main() -> None:
                 trust_remote_code=True,
             )
 
-        # New LoRA adapter for GRPO training (on top of merged SFT weights)
+        # A NEW LoRA adapter for GRPO training.  These are the ONLY weights
+        # that the optimizer will update.  The merged SFT weights underneath
+        # serve as both the "base model" and the "reference policy" for the
+        # KL penalty — keeping GRPO's updates grounded in SFT behaviour.
         peft_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=args.lora_rank,
@@ -283,15 +343,69 @@ def main() -> None:
         print(f"\nLoading model with Unsloth (fast inference)...")
         from unsloth import FastLanguageModel
 
+        # Unsloth needs a FULL model, not a LoRA adapter.  If the SFT
+        # output is a LoRA adapter we must merge it into the base model
+        # first, save the merged result to disk, and point Unsloth at
+        # that.  The merged model is cached so this only happens once.
+        sft_path = Path(args.sft_model)
+        is_sft_lora = (sft_path / "adapter_config.json").exists()
+
+        if is_sft_lora:
+            merged_sft_dir = Path(args.output_dir) / "_sft_merged"
+
+            if (merged_sft_dir / "config.json").exists():
+                print(f"  Using cached merged SFT model at {merged_sft_dir}")
+            else:
+                print(f"  SFT model is a LoRA adapter — merging into base model first...")
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+                from peft import PeftModel
+
+                print(f"    Loading base model {args.base_model}...")
+                _base = AutoModelForCausalLM.from_pretrained(
+                    args.base_model,
+                    torch_dtype=torch.bfloat16,
+                    trust_remote_code=True,
+                )
+                print(f"    Applying SFT LoRA from {args.sft_model}...")
+                _base = PeftModel.from_pretrained(_base, args.sft_model)
+                print(f"    Merging SFT LoRA into base weights...")
+                _merged = _base.merge_and_unload()
+
+                merged_sft_dir.mkdir(parents=True, exist_ok=True)
+                _merged.save_pretrained(str(merged_sft_dir))
+
+                _tok = AutoTokenizer.from_pretrained(
+                    args.base_model, trust_remote_code=True,
+                )
+                _tok.save_pretrained(str(merged_sft_dir))
+
+                del _base, _merged, _tok
+                torch.cuda.empty_cache()
+                print(f"    Merged SFT model saved to {merged_sft_dir}")
+
+            unsloth_model_path = str(merged_sft_dir)
+        else:
+            # SFT output is already a full merged model — use directly
+            unsloth_model_path = args.sft_model
+
+        # Now load the full (merged) model with Unsloth.
+        # fast_inference=True uses vLLM for generation (much faster), but
+        # requires vLLM to be installed.  Fall back gracefully if missing.
+        _has_vllm = shutil.which("python") and __import__("importlib").util.find_spec("vllm") is not None
+        if not _has_vllm:
+            print("  WARNING: vLLM not installed — Unsloth will run without fast inference.")
+            print("  Install vLLM for ~2-3x faster generation: pip install vllm")
+
         model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=args.sft_model,
+            model_name=unsloth_model_path,
             max_seq_length=args.max_seq_length,
             load_in_4bit=False,
-            fast_inference=True,
-            max_lora_rank=args.lora_rank,
-            gpu_memory_utilization=0.9,
+            fast_inference=_has_vllm,
+            **( {"max_lora_rank": args.lora_rank, "gpu_memory_utilization": 0.9}
+                if _has_vllm else {}),
         )
 
+        # Add a fresh GRPO LoRA adapter on top of the merged model
         model = FastLanguageModel.get_peft_model(
             model,
             r=args.lora_rank,
@@ -308,12 +422,20 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Convert records to HF Dataset
     # ------------------------------------------------------------------
+    # Each record has: prompt, test_code, package_name, rule_code, task_id,
+    # variant.  GRPOTrainer will forward the non-prompt columns (test_code,
+    # package_name, etc.) as **kwargs to each reward function, so the reward
+    # functions can use them for evaluation (e.g. reward_opa_test needs
+    # test_code and package_name to run `opa test`).
+    # ------------------------------------------------------------------
     from datasets import Dataset
     import numpy as np
 
     dataset = Dataset.from_list(grpo_records)
 
-    # Filter by prompt length (keep p90)
+    # Drop prompts longer than p90 — very long prompts waste compute and
+    # leave too little room for the completion (which must fit in
+    # max_seq_length - max_prompt_length).
     tokenized = dataset.map(
         lambda x: {
             "tokens": tokenizer.apply_chat_template(
@@ -354,7 +476,7 @@ def main() -> None:
     print(f"  Num generations:  {args.num_generations}")
     print(f"  Batch size:       {args.batch_size} × {args.grad_accum}")
     print(f"  Learning rate:    {args.lr}")
-    print(f"  KL beta:          0.04")
+    print(f"  KL beta:          0.10")
     print(f"  Gen temperature:  0.7")
     print(f"  Save every:       {save_every} steps")
     print(f"  Dataset size:     {len(dataset)}")
@@ -365,6 +487,11 @@ def main() -> None:
 
     # ------------------------------------------------------------------
     # Import reward functions + wrap with logger
+    # ------------------------------------------------------------------
+    # ALL_REWARD_FUNCS is a list of 5 callables.  GRPOTrainer calls each
+    # one on every completion, sums the scores, and uses the sum as the
+    # reward for the policy gradient.  The wrap_reward_funcs() call adds
+    # transparent logging without changing the scores.
     # ------------------------------------------------------------------
     from grpo.rewards import ALL_REWARD_FUNCS
     from grpo.logging_utils import StepLogger
@@ -382,7 +509,9 @@ def main() -> None:
     # ------------------------------------------------------------------
     from trl import GRPOConfig, GRPOTrainer
 
-    if not args.no_unsloth:
+    # vLLM sampling params are only used when Unsloth + vLLM are both active.
+    _use_vllm = not args.no_unsloth and __import__("importlib").util.find_spec("vllm") is not None
+    if _use_vllm:
         from vllm import SamplingParams
         vllm_sampling_params = SamplingParams(
             min_p=0.1,
@@ -395,23 +524,67 @@ def main() -> None:
     else:
         vllm_sampling_params = None
 
+    # ------------------------------------------------------------------
+    # GRPOConfig controls both generation and the policy-gradient update.
+    #
+    # The training loop (inside GRPOTrainer.train()) works like this:
+    #
+    #   for step in range(max_steps):
+    #       prompt = sample_one_prompt(dataset)
+    #
+    #       # ① GENERATE — produce N completions from the current policy
+    #       completions = model.generate(prompt, n=num_generations,
+    #                                    temperature=0.7)
+    #
+    #       # ② SCORE — call each reward function, sum their scores
+    #       rewards = [sum(fn(c) for fn in reward_funcs) for c in completions]
+    #
+    #       # ③ ADVANTAGE — group-relative normalisation
+    #       advantages = (rewards - mean(rewards)) / std(rewards)
+    #       #   → completions better than the group average get positive
+    #       #     advantage; worse ones get negative.
+    #       #   → if all completions score the same, std≈0 → no gradient.
+    #
+    #       # ④ POLICY GRADIENT + KL — for each token t in completion i:
+    #       #   loss += -advantage_i * log π(t|context)   (REINFORCE)
+    #       #         + β * KL(π_current ‖ π_ref)          (stay near SFT)
+    #
+    #       # ⑤ BACKPROP — update LoRA weights via AdamW
+    #       loss.backward()
+    #       optimizer.step()
+    #
+    # The result: tokens that appear in high-reward completions become more
+    # likely; tokens in low-reward completions become less likely.
+    # ------------------------------------------------------------------
     training_args = GRPOConfig(
         output_dir=args.output_dir,
 
         # vLLM (only with Unsloth)
         **({"vllm_sampling_params": vllm_sampling_params} if vllm_sampling_params else {}),
 
-        # Generation
-        temperature=0.7,                       # lower → more coherent generations
+        # ── Generation parameters ──
+        # temperature controls randomness in sampling.  0.7 is a balance:
+        # high enough that the N completions are diverse (so their rewards
+        # differ → learning signal exists), low enough to stay coherent.
+        temperature=0.7,
         max_prompt_length=max_prompt_length,
         max_completion_length=max_completion_length,
+        # N completions per prompt — these form the "group" that GRPO
+        # compares.  The variance in their rewards drives learning.
         num_generations=args.num_generations,
 
-        # KL penalty — light touch; our rewards are deterministic (OPA/Regal)
-        # so the model can safely explore beyond SFT behavior
-        beta=0.04,
+        # ── KL penalty (β) ──
+        # Penalises per-token divergence from the reference policy (the
+        # frozen SFT model).  Higher β keeps the model closer to SFT,
+        # preventing regression on prompts GRPO didn't train on enough.
+        # 0.04 was too low — the model drifted and forgot correct SFT
+        # behaviour on under-represented prompts.  0.10 is a safer
+        # default that still allows improvement while preserving SFT
+        # knowledge.
+        beta=0.10,
 
-        # Optimisation
+        # ── Optimiser ──
+        # AdamW updates the LoRA weights using the policy-gradient loss.
         learning_rate=args.lr,
         weight_decay=0.001,
         warmup_ratio=args.warmup_ratio,
@@ -419,7 +592,7 @@ def main() -> None:
         optim="adamw_8bit",
         bf16=True,
 
-        # Batching
+        # ── Batching ──
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
 
@@ -435,6 +608,19 @@ def main() -> None:
 
     # ------------------------------------------------------------------
     # Train
+    # ------------------------------------------------------------------
+    # GRPOTrainer ties everything together:
+    #   - model:            the policy being optimised (SFT base + new LoRA)
+    #   - reward_funcs:     the 5 scoring functions (format, parse, test,
+    #                       schema, lint) — their outputs drive the gradient
+    #   - train_dataset:    prompts + metadata; GRPOTrainer forwards extra
+    #                       columns (test_code, package_name, …) as kwargs
+    #                       to each reward function automatically
+    #   - peft_config:      defines the LoRA adapter whose weights are
+    #                       the only thing the optimiser updates
+    #
+    # trainer.train() runs the generate→score→advantage→backprop loop
+    # described above for max_steps iterations.
     # ------------------------------------------------------------------
     print("\nStarting GRPO training...")
 
@@ -456,6 +642,10 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Save LoRA adapter
     # ------------------------------------------------------------------
+    # After training, the LoRA weights encode "what GRPO learned on top of
+    # SFT".  Saving just the adapter is small (~100 MB vs ~8 GB for the
+    # full model) and lets us swap/stack adapters later.
+    # ------------------------------------------------------------------
     print(f"\nSaving GRPO LoRA adapter to {args.output_dir}...")
     if args.no_unsloth:
         trainer.save_model()
@@ -474,10 +664,15 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Save fully merged model (base + SFT + GRPO — ready for inference)
     # ------------------------------------------------------------------
+    # Merging collapses base weights + LoRA deltas into a single set of
+    # weights.  The result is a standalone model that incorporates
+    # everything: original Qwen knowledge, SFT Rego training, AND the
+    # GRPO reasoning improvements.  No adapter stacking needed at
+    # inference time.
+    # ------------------------------------------------------------------
     merged_dir = Path(args.output_dir) / "merged"
     print(f"\nSaving fully merged model to {merged_dir}...")
     try:
-        # The trainer's model already has GRPO LoRA applied; merge it
         merged_model = trainer.model.merge_and_unload()
         merged_model.save_pretrained(str(merged_dir))
         tokenizer.save_pretrained(str(merged_dir))

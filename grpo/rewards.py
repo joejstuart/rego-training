@@ -10,6 +10,37 @@ Five stacked reward signals scored by OPA / Regal evaluation:
 
 Total signal range: +15.0 (perfect) to -17.0 (worst).
 
+─── How these scores affect model weights ─────────────────────────────
+
+  GRPOTrainer calls ALL 5 functions on each completion and **sums** the
+  scores to get one scalar reward per completion.
+
+  Example for 4 completions of the same prompt:
+
+    Completion A:  format=+5  parse=+2  test=+5  schema=+1  lint=+2  → total = +15
+    Completion B:  format=+5  parse=+2  test=-3  schema=+1  lint=+2  → total = +7
+    Completion C:  format=+5  parse=-2  test=-4  schema=-1  lint=-2  → total = -4
+    Completion D:  format=-3  parse=-2  test=-4  schema=-1  lint=-2  → total = -12
+
+    mean = 1.5,  std = 10.2
+
+    Advantage A = (15 - 1.5) / 10.2 = +1.32   → ↑ make these tokens MORE likely
+    Advantage B = (7 - 1.5) / 10.2  = +0.54   → ↑ slightly more likely
+    Advantage C = (-4 - 1.5) / 10.2 = -0.54   → ↓ slightly less likely
+    Advantage D = (-12 - 1.5) / 10.2= -1.32   → ↓ make these tokens LESS likely
+
+  The advantage multiplies the log-probability of each token in the
+  completion during the policy-gradient update.  So:
+    - Tokens from completion A get a strong positive push
+    - Tokens from completion D get a strong negative push
+    - The optimizer (AdamW) adjusts LoRA weights accordingly
+
+  Over many steps, the model learns to produce outputs that score high on
+  ALL functions simultaneously — correct structure, valid syntax, passing
+  tests, valid schema references, and clean lint.
+
+────────────────────────────────────────────────────────────────────────
+
 Each function receives (completions, **kwargs) and returns a list of float
 scores, one per completion.  Extra dataset columns (test_code, package_name,
 etc.) are forwarded via **kwargs by the GRPOTrainer.
@@ -103,6 +134,12 @@ def _extract_rego_code(text: str) -> Optional[str]:
 # ===========================================================================
 # 1. reward_format  (max +5.0 / min -7.0)
 # ===========================================================================
+# PURPOSE: Ensures the model's output has the right SHAPE before we even
+# check if it's valid Rego.  This is the cheapest reward to compute (pure
+# regex, no subprocess) and gives the model fast signal about basic
+# structural requirements.  Without this, the model might produce valid
+# Rego that doesn't follow the deny-rule pattern we need.
+# ===========================================================================
 
 def reward_format(completions, **kwargs) -> list[float]:
     """Reward structural compliance with Rego deny-rule conventions.
@@ -145,6 +182,14 @@ def reward_format(completions, **kwargs) -> list[float]:
 # ===========================================================================
 # 2. reward_opa_parse  (max +2.0 / min -2.0)
 # ===========================================================================
+# PURPOSE: Binary syntax check — can OPA even parse this code?  This is a
+# gate: if opa_parse fails, opa_test will also fail, but having a separate
+# signal lets the model learn "fix your syntax first" independently from
+# "make the tests pass".  The separate score means a completion with valid
+# syntax but failing tests (+2 parse, -3 test = -1) is ranked higher than
+# one that doesn't parse at all (-2 parse, -4 test = -6), teaching the
+# model that parseable-but-wrong is closer to the goal than gibberish.
+# ===========================================================================
 
 def reward_opa_parse(completions, **kwargs) -> list[float]:
     """Reward syntactically valid Rego via ``opa check``.
@@ -178,6 +223,16 @@ def reward_opa_parse(completions, **kwargs) -> list[float]:
 
 # ===========================================================================
 # 3. reward_opa_test  (max +5.0 / min -4.0)
+# ===========================================================================
+# PURPOSE: The STRONGEST signal — does the generated rule actually work?
+# This is worth the most points (+5) because it's the ultimate goal: a
+# rule that passes all tests is functionally correct.  The test_code and
+# package_name come from the dataset (forwarded by GRPOTrainer as kwargs).
+#
+# This function pairs the model's generated rule with the ground-truth
+# test file, writes both to a temp directory, and runs `opa test`.
+# The ground-truth test was validated in Phase 3 against the reference
+# rule, so if the model's rule passes the same tests, it's equivalent.
 # ===========================================================================
 
 def reward_opa_test(completions, test_code, package_name, **kwargs) -> list[float]:
@@ -247,6 +302,12 @@ def reward_opa_test(completions, test_code, package_name, **kwargs) -> list[floa
 # ===========================================================================
 # 4. reward_regal_lint  (max +2.0 / min -2.0)
 # ===========================================================================
+# PURPOSE: Encourages idiomatic Rego style.  A rule can pass all tests but
+# still use non-idiomatic patterns (e.g. redundant iterations, non-standard
+# variable names).  This reward nudges the model toward clean code that a
+# human Rego developer would write.  Worth fewer points than opa_test
+# because correctness matters more than style.
+# ===========================================================================
 
 def reward_regal_lint(completions, **kwargs) -> list[float]:
     """Reward idiomatic, lint-clean Rego via ``regal lint``.
@@ -314,6 +375,13 @@ def reward_regal_lint(completions, **kwargs) -> list[float]:
 # ===========================================================================
 # 5. reward_schema_paths  (max +1.0 / min -1.0 base, can go lower)
 # ===========================================================================
+# PURPOSE: Prevents hallucinated field references.  The model might write
+# `input.predicate.buildConfig.taskz` (misspelled) — syntactically valid
+# Rego, but it would never match real attestation data.  This reward checks
+# every `input.*` path against the field catalog from Phase 0.  Worth fewer
+# points because it's a subtle error, but the penalty stacks per invalid
+# reference so a completely hallucinated rule gets heavily penalised.
+# ===========================================================================
 
 def reward_schema_paths(completions, **kwargs) -> list[float]:
     """Reward correct schema path references in generated Rego code.
@@ -367,11 +435,17 @@ def reward_schema_paths(completions, **kwargs) -> list[float]:
 # ===========================================================================
 # Convenience list of all reward functions (for the trainer)
 # ===========================================================================
+# GRPOTrainer iterates this list, calls each function on every completion,
+# and sums the returned scores to get one total reward per completion.
+# The ORDER doesn't matter — they're summed, not chained.
+# ===========================================================================
 
 ALL_REWARD_FUNCS = [
-    reward_format,
-    reward_opa_parse,
-    reward_opa_test,
-    reward_schema_paths,
-    reward_regal_lint,
+    reward_format,       # max +5.0 / min -7.0  — structural shape
+    reward_opa_parse,    # max +2.0 / min -2.0  — syntactic validity
+    reward_opa_test,     # max +5.0 / min -4.0  — functional correctness (strongest signal)
+    reward_schema_paths, # max +1.0 / min -∞    — schema grounding
+    reward_regal_lint,   # max +2.0 / min -2.0  — idiomatic style
+    # ─────────────────────────────────────────
+    # Perfect score: +15.0    Worst: -17.0 (approx)
 ]

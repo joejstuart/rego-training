@@ -237,6 +237,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     training_args = SFTConfig(
         output_dir=args.output_dir,
+        overwrite_output_dir=True,
 
         # Batch & accumulation
         per_device_train_batch_size=args.batch_size,

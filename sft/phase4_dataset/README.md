@@ -4,8 +4,8 @@
 
 Combine validated (instruction, rule, test) triples from Phases 1-3 into the
 final SFT training dataset, optimized for **Qwen3-4B**. Each triple is expanded
-with 7 instruction variants across 5 output types, with a domain-specific
-system prompt and `<think>` reasoning traces.
+with multiple instruction variants across 6 output types, with a domain-specific
+system prompt (including schema map) and `<think>` reasoning traces.
 
 ## Qwen3 Optimizations
 
@@ -24,7 +24,7 @@ HuggingFace's `SFTTrainer`:
 }
 ```
 
-### 2. Domain-specific system prompt
+### 2. Domain-specific system prompt (with schema map)
 
 A consistent system prompt establishes the Rego expert persona and conventions:
 - Rego v1 syntax (`import rego.v1`)
@@ -32,20 +32,31 @@ A consistent system prompt establishes the Rego expert persona and conventions:
 - `some x in collection` iteration
 - `sprintf` for deny messages
 - `count(<pkg>.deny) == 0` / `> 0` test assertions
+- **SLSA Attestation Schema Map** — a structured reference showing all valid
+  `input.*` paths, enabling the model to resolve ambiguous field names
+  (e.g., "digest.sha" → `input.predicate.materials[*].digest.sha256`)
 
 ### 3. `<think>` reasoning traces
 
 Every example includes a `<think>` block that teaches the model HOW to
 approach the problem before writing code. The traces are deterministic and
-tier-aware:
+vary by context:
 
+**Standard traces (tier-aware):**
 - **Tier 1** (field-level): Brief — identifies the field, notes whether
   iteration is needed, states the comparison pattern.
 - **Tier 2** (pattern-level): Medium — describes the iteration strategy,
   set operations, helper functions, and per-element deny messages.
 - **Tier 3** (composite): Detailed — breaks down multi-field logic, identifies
-  needed built-ins (`time.parse_rfc3339_ns`, `startswith`), helper functions,
-  and comprehensions.
+  needed built-ins, helper functions, and comprehensions.
+
+**Schema-resolution traces (ambiguous variants):**
+- Map informal user language to the correct attestation path
+- Show the reasoning: "I don't see `digest.sha` but I do see `digest.sha256`"
+
+**Compositional traces (return directives, custom values):**
+- Explicitly decompose the task into DATA → CONDITION → RETURN
+- Include VALUE / OPERATOR reasoning for custom value variants
 
 Traces are also tailored to the output type:
 - `rule_only`: Focuses on rule construction approach
@@ -81,19 +92,23 @@ every example and reports token statistics.
 | **keyword_heavy** | Rego jargon throughout | "Create a partial set rule `deny contains msg if`..." |
 | **vague** | Under-specified but answerable | "Write a rule to verify the SLSA predicate type." |
 | **casual** | Informal "can you" framing (modifications only) | "Can you rename the package from X to Y?" |
+| **ambiguous** | Schema-ambiguous prompts | "deny if materials digest.sha equals '1234'" |
+| **return_directive** | Explicit return instructions | "Return only the task name in the deny message" |
+| **custom_value_value_swap** | Different literal value, same operator | Changes `"Succeeded"` to `"Running"` |
+| **custom_value_operator_flip** | Flipped operator with new literal | Changes `!= "Succeeded"` to `== "Failed"` |
 
 ## Output Types
 
 | Type | Count | Description |
 |------|-------|-------------|
-| `rule_only` | 420 | instruction → rule |
-| `test_only` | 420 | instruction → tests |
-| `rule_and_test` | 420 | instruction → rule + tests |
+| `rule_only` | 646 | instruction → rule |
+| `test_only` | 455 | instruction → tests |
+| `rule_and_test` | 455 | instruction → rule + tests |
 | `rule_from_test` | 60 | tests → rule (canonical only) |
 | `test_from_rule` | 60 | rule → tests (canonical only) |
 | `modify_rule` | 456 | original rule + instruction → modified rule |
 
-## Math
+## Dataset Composition
 
 ```
 Write from scratch:
@@ -101,57 +116,52 @@ Write from scratch:
   60 tasks × 1 canonical × 2 reversals    =   120
                                   Subtotal: 1,380
 
+Ambiguous (schema resolution):
+  35 tasks × 3 output types               =   105
+
+Compositional (return directives):
+  ~44 tasks × ~3 variants                 =   133
+
+Custom value (value swap + operator flip):
+  29 value_swap + 29 operator_flip         =    58
+
 Rule modifications (Phase 5):
   152 modifications × 3 variants           =   456
 
-                                     Total: 1,836
+                                     Total: 2,132
 ```
 
 ## Results
 
-- **1,836 training examples** generated (1,380 write/reversal + 456 modifications)
+- **2,132 training examples** generated
 - **0 tasks skipped** (all 60 passed Phase 3)
-- **1,836/1,836 examples have `<think>` traces**
+- **2,132/2,132 examples have `<think>` traces**
 - **0 empty responses**
-
-### Token audit (Qwen3-4B tokenizer)
-
-```
-Token counts per example:
-  min:    265
-  p25:    394
-  median: 588
-  p75:    664
-  p95:    915
-  max:    1126
-  total:  782,258
-  > 1024 tokens: 15 examples (1.1%)
-
-Recommended max_seq_length: 2048 (covers p99=1038)
-
-By tier:
-  Tier 1: median=589, max=1104
-  Tier 2: median=581, max=1051
-  Tier 3: median=587, max=1126
-```
 
 ### Breakdown by tier
 
 | Tier | Examples |
 |------|----------|
-| Tier 1 (field-level) | 1,198 |
-| Tier 2 (pattern-level) | 348 |
-| Tier 3 (composite) | 290 |
+| Tier 1 (field-level) | 1,408 |
+| Tier 2 (pattern-level) | 383 |
+| Tier 3 (composite) | 341 |
 
-### `<think>` trace lengths
+### Breakdown by variant
 
-```
-min=127 chars, median=428 chars, max=691 chars
-```
-
-### File size
-
-~4.1 MB
+| Variant | Count |
+|---------|-------|
+| canonical | 452 |
+| terse | 332 |
+| reordered | 180 |
+| poor_grammar | 180 |
+| keyword_heavy | 180 |
+| verbose | 180 |
+| vague | 180 |
+| casual | 152 |
+| return_directive | 133 |
+| ambiguous | 105 |
+| custom_value_operator_flip | 29 |
+| custom_value_value_swap | 29 |
 
 ## Running
 
@@ -184,4 +194,13 @@ training_args = SFTConfig(
     learning_rate=2e-5,
     bf16=True,                   # A100 optimization
 )
+```
+
+Or use the provided training script:
+
+```bash
+cd sft/
+python train.py              # LoRA (default)
+python train.py --no-lora    # Full fine-tuning
+python train.py --dry-run    # Print config only
 ```
