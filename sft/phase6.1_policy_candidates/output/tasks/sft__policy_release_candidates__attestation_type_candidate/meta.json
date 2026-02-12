@@ -1,0 +1,8 @@
+{
+  "task_id": "sft__policy_release_candidates__attestation_type_candidate",
+  "package_name": "attestation_type_candidate",
+  "task_type": "deny_rule",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/sft/policy_release_candidates/attestation_type_candidate.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/sft/policy_release_candidates/attestation_type_candidate_test.rego",
+  "source_group": "policy_release_candidates"
+}

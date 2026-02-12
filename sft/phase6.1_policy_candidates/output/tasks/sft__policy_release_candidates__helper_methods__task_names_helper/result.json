@@ -1,0 +1,10 @@
+{
+  "task_id": "sft__policy_release_candidates__helper_methods__task_names_helper",
+  "status": "pass",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "opa_check_output": "",
+  "opa_test_output": "/Users/jstuart/Documents/repos/aiagent/sft/phase6.1_policy_candidates/output/tasks/sft__policy_release_candidates__helper_methods__task_names_helper/_validation/task_names_helper_test.rego:\ndata.task_names_helper_test.test_returns_base_and_parameterized_task_names: PASS (328.417\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 1/1\n",
+  "regal_lint": "pass",
+  "regal_lint_output": "{\n  \"violations\": [],\n  \"notices\": [\n    {\n      \"title\": \"implicit-future-keywords\",\n      \"description\": \"Rule made obsolete by rego.v1 capability\",\n      \"category\": \"imports\",\n      \"level\": \"notice\",\n      \"severity\": \"none\"\n    }\n  ],\n  \"summary\": {\n    \"files_scanned\": 1,\n    \"files_failed\": 0,\n    \"rules_skipped\": 0,\n    \"num_violations\": 0\n  }\n}\n"
+}

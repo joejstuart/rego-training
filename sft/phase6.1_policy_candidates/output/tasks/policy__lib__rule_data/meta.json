@@ -1,0 +1,8 @@
+{
+  "task_id": "policy__lib__rule_data",
+  "package_name": "lib",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/policy/lib/rule_data.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/policy/lib/rule_data_test.rego",
+  "source_group": "policy_lib"
+}

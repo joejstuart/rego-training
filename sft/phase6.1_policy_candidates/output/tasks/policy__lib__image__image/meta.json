@@ -1,0 +1,8 @@
+{
+  "task_id": "policy__lib__image__image",
+  "package_name": "lib.image",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/policy/lib/image/image.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/policy/lib/image/image_test.rego",
+  "source_group": "policy_lib"
+}

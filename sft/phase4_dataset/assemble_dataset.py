@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 4: Assemble the SFT dataset optimized for Qwen3-4B.
+"""Phase 4: Assemble the SFT dataset optimized for Qwen3-14B.
 
 For each of the 60 tasks that passed Phase 3, this script:
   1. Loads the canonical instruction (Phase 1), rule (Phase 3), and test (Phase 3).
@@ -19,7 +19,7 @@ Each line is:
     {"role": "system", "content": "..."},
     {"role": "user", "content": "..."},
     {"role": "assistant", "content": "<think>\\n...\\n</think>\\n\\n...code..."}
-  ], "task_id": "...", "tier": N, "variant": "...", "type": "..."}
+  ], "task_id": "...", "tier": N, "variant": "...", "type": "...", "task_type": "..."}
 
 Usage:
     cd sft/
@@ -63,15 +63,18 @@ random.seed(42)
 
 SYSTEM_PROMPT = """\
 You are an expert in the Rego policy language (Open Policy Agent). \
-You specialize in writing deny rules for verifying SLSA provenance attestations.
+You specialize in writing Rego policy code for verifying SLSA provenance attestations.
 
 Conventions you always follow:
 - Use `import rego.v1` (Rego v1 syntax).
-- Use `deny contains msg if { ... }` (partial set rules). Rules fire when something is WRONG.
+- Depending on the request, produce either:
+  - a deny policy rule (for policy decisions), or
+  - a standalone helper function/rule (for reusable logic).
 - Use `some x in collection` to iterate (Rego v1 iteration, not indexing).
-- Use `sprintf` to produce human-readable deny messages.
+- Use `sprintf` for user-facing messages when generating deny rules.
 - The attestation document is accessed via `input`.
-- Tests use `count(<pkg>.deny) == 0` for positive cases and `count(<pkg>.deny) > 0` for negative cases.
+- For deny-rule tests: use `count(<pkg>.deny) == 0` (positive) and `count(<pkg>.deny) > 0` (negative).
+- For helper-method tests: assert the helper's expected boolean/value result directly.
 
 SLSA attestation schema (field → JSON path):
 - _type: ._type
@@ -141,6 +144,7 @@ def _think_for_rule(instr_rec: dict, rule_code: str, out_type: str) -> str:
     paths = instr_rec.get("input_paths", [])
     pkg = instr_rec["package_name"]
     patterns = _detect_rule_patterns(rule_code)
+    is_deny_rule = "deny contains msg if" in rule_code
 
     lines = []
 
@@ -156,12 +160,17 @@ def _think_for_rule(instr_rec: dict, rule_code: str, out_type: str) -> str:
             )
         else:
             lines.append(
-                "I need a simple comparison: deny if the value doesn't match the expected one."
+                "I need a simple comparison on the target value."
             )
 
-        lines.append(
-            "Pattern: `deny contains msg if { <condition>; msg := sprintf(...) }`"
-        )
+        if is_deny_rule:
+            lines.append(
+                "Pattern: `deny contains msg if { <condition>; msg := sprintf(...) }`"
+            )
+        else:
+            lines.append(
+                "Pattern: define a focused helper method with clear inputs and return value."
+            )
 
     elif tier == 2:
         # Medium reasoning for pattern-level checks
@@ -187,7 +196,7 @@ def _think_for_rule(instr_rec: dict, rule_code: str, out_type: str) -> str:
 
         if patterns["has_helper_fn"]:
             lines.append(
-                "A helper function will keep the main deny rule clean "
+                "A helper function will keep the main logic clean "
                 "and make the logic easier to test."
             )
 
@@ -196,9 +205,14 @@ def _think_for_rule(instr_rec: dict, rule_code: str, out_type: str) -> str:
                 "I'll use negation (`not`) with a helper to check for absence."
             )
 
-        lines.append(
-            "Each failing element produces its own deny message with `sprintf`."
-        )
+        if is_deny_rule:
+            lines.append(
+                "Each failing element produces its own deny message with `sprintf`."
+            )
+        else:
+            lines.append(
+                "The helper should return a predictable value for each checked element."
+            )
 
     elif tier == 3:
         # Detailed reasoning for composite/semantic checks
@@ -243,7 +257,10 @@ def _think_for_rule(instr_rec: dict, rule_code: str, out_type: str) -> str:
         if len(paths) > 1:
             lines.append(f"Fields involved: {', '.join(f'`{p}`' for p in paths)}.")
 
-        lines.append("The deny message should clearly explain what failed and why.")
+        if is_deny_rule:
+            lines.append("The deny message should clearly explain what failed and why.")
+        else:
+            lines.append("The helper output should clearly encode pass/fail for callers.")
 
     return "\n".join(lines)
 
@@ -286,12 +303,22 @@ def _think_for_test(instr_rec: dict, rule_code: str) -> str:
 def _think_for_rule_and_test(instr_rec: dict, rule_code: str) -> str:
     """Generate a <think> trace for combined rule + test output."""
     rule_think = _think_for_rule(instr_rec, rule_code, "rule_and_test")
+    pkg = instr_rec["package_name"]
+    is_deny_rule = "deny contains msg if" in rule_code
     lines = [
         rule_think,
         "",
         "Now for the tests:",
-        "- Positive test: valid input → `count(deny) == 0`",
-        "- Negative test: invalid input → `count(deny) > 0`",
+        (
+            f"- Positive test: valid input -> `count({pkg}.deny) == 0`"
+            if is_deny_rule else
+            "- Positive test: valid input -> helper returns expected value"
+        ),
+        (
+            f"- Negative test: invalid input -> `count({pkg}.deny) > 0`"
+            if is_deny_rule else
+            "- Negative test: invalid input -> helper returns unexpected/failure value"
+        ),
         "I'll use minimal mock data with `with input as { ... }`.",
     ]
     return "\n".join(lines)
@@ -301,12 +328,21 @@ def _think_for_rule_from_test(instr_rec: dict, rule_code: str, test_code: str) -
     """Generate a <think> trace for test→rule direction."""
     pkg = instr_rec["package_name"]
     patterns = _detect_rule_patterns(rule_code)
+    deny_style = f"count({pkg}.deny)" in test_code
 
     lines = [
         "Let me analyze what these tests expect.",
         "",
-        f"The positive test provides valid input and asserts `count({pkg}.deny) == 0`.",
-        f"The negative test provides invalid input and asserts `count({pkg}.deny) > 0`.",
+        (
+            f"The positive test provides valid input and asserts `count({pkg}.deny) == 0`."
+            if deny_style else
+            "The positive test provides valid input and asserts the helper's expected return."
+        ),
+        (
+            f"The negative test provides invalid input and asserts `count({pkg}.deny) > 0`."
+            if deny_style else
+            "The negative test provides invalid input and asserts the helper's failure return."
+        ),
         "",
         "Comparing the valid and invalid inputs tells me what the rule checks:",
     ]
@@ -320,10 +356,15 @@ def _think_for_rule_from_test(instr_rec: dict, rule_code: str, test_code: str) -
         lines.append("- Multiple conditions need to be checked (multiple deny rules).")
 
     lines.append("")
-    lines.append(
-        f"I'll write a `deny contains msg if` rule in package `{pkg}` "
-        "that fires on the invalid case but not the valid one."
-    )
+    if deny_style:
+        lines.append(
+            f"I'll write a `deny contains msg if` rule in package `{pkg}` "
+            "that fires on the invalid case but not the valid one."
+        )
+    else:
+        lines.append(
+            f"I'll write helper logic in package `{pkg}` that matches the expected test returns."
+        )
 
     return "\n".join(lines)
 
@@ -332,6 +373,7 @@ def _think_for_test_from_rule(instr_rec: dict, rule_code: str) -> str:
     """Generate a <think> trace for rule→test direction."""
     pkg = instr_rec["package_name"]
     patterns = _detect_rule_patterns(rule_code)
+    is_deny_rule = "deny contains msg if" in rule_code
 
     lines = [
         "Let me analyze what this rule checks to design appropriate tests.",
@@ -348,12 +390,20 @@ def _think_for_test_from_rule(instr_rec: dict, rule_code: str) -> str:
         lines.append("The rule parses timestamps, so I need valid RFC3339 timestamps.")
 
     lines.append("")
-    lines.append(
-        f"Positive test: input that satisfies all conditions → `count({pkg}.deny) == 0`."
-    )
-    lines.append(
-        f"Negative test: input that violates a condition → `count({pkg}.deny) > 0`."
-    )
+    if is_deny_rule:
+        lines.append(
+            f"Positive test: input that satisfies all conditions -> `count({pkg}.deny) == 0`."
+        )
+        lines.append(
+            f"Negative test: input that violates a condition -> `count({pkg}.deny) > 0`."
+        )
+    else:
+        lines.append(
+            "Positive test: input that satisfies all conditions -> helper returns expected value."
+        )
+        lines.append(
+            "Negative test: input that violates a condition -> helper returns failure value."
+        )
     lines.append("")
     lines.append("I'll use `with input as { ... }` with minimal mock data.")
 
@@ -439,12 +489,17 @@ def _variant_terse(instr: str, pkg: str, paths: list[str]) -> str:
 def _variant_verbose(instr: str, pkg: str, paths: list[str]) -> str:
     """Over-explain with redundant detail."""
     path_str = ", ".join(f"`{p}`" for p in paths)
+    wants_helper = "helper" in instr.lower()
     return (
-        f"I need you to write a Rego policy rule using the deny pattern. "
+        f"I need you to write Rego policy code. "
         f"The rule should be in a package called `{pkg}`. "
         f"Specifically, {instr.lower()} "
         f"The relevant JSON path(s) in the attestation are: {path_str}. "
-        f"Make sure to import rego.v1 and use the `deny contains msg if` pattern."
+        + (
+            "Make sure to import rego.v1 and implement a standalone helper method."
+            if wants_helper else
+            "Make sure to import rego.v1 and, if this is a policy decision check, use the `deny contains msg if` pattern."
+        )
     )
 
 
@@ -494,14 +549,21 @@ def _variant_reordered(instr: str, pkg: str, paths: list[str]) -> str:
 def _variant_keyword_heavy(instr: str, pkg: str, paths: list[str]) -> str:
     """Use Rego jargon throughout."""
     path_str = ", ".join(paths)
+    wants_helper = "helper" in instr.lower()
     m = re.search(r"rejects the attestation if (.+?)(?:\.\s*\(|$)", instr)
     constraint = m.group(1).strip().rstrip(".") if m else "the input is invalid"
+    if wants_helper:
+        return (
+            f"Create a standalone Rego helper method in package `{pkg}` with `import rego.v1`. "
+            f"The helper should evaluate whether {constraint}. "
+            f"Relevant input paths: {path_str}."
+        )
     return (
-        f"Create a Rego partial set rule `deny contains msg if {{ ... }}` "
-        f"in package `{pkg}` with `import rego.v1`. "
-        f"The rule fires when {constraint}. "
+        f"Create Rego policy code in package `{pkg}` with `import rego.v1`. "
+        f"If this is a decision policy, use `deny contains msg if {{ ... }}`. "
+        f"The check fires when {constraint}. "
         f"Relevant input paths: {path_str}. "
-        f"Use `sprintf` for the deny message."
+        f"Use `sprintf` for deny messages when applicable."
     )
 
 
@@ -520,9 +582,9 @@ def _variant_vague(instr: str, pkg: str, _paths: list[str]) -> str:
         return f"Write a Rego rule to verify the {note.lower()}."
     elif constraint_fragment and len(constraint_fragment) < 120:
         simplified = constraint_fragment.replace("`.predicate.", "the ").replace("`", "")
-        return f"Make a deny rule checking {simplified}."
+        return f"Write Rego code checking {simplified}."
     else:
-        return f"Write a Rego deny rule for the `{pkg}` check."
+        return f"Write Rego policy code for the `{pkg}` check."
 
 
 VARIANT_GENERATORS = [
@@ -1610,12 +1672,13 @@ def _wrap_rule_only(variant_instr: str) -> str:
 def _wrap_test_only(variant_instr: str) -> str:
     text = variant_instr
     for old, new in [
-        ("Write a Rego deny rule that", "Write Rego tests for a deny rule that"),
-        ("write rego deny rule that", "write rego tests for deny rule that"),
-        ("deny if", "write tests for a rule that denies if"),
-        ("Create a Rego partial set rule", "Write Rego tests for a partial set rule"),
-        ("Write a Rego rule to", "Write Rego tests for a rule that"),
-        ("Make a deny rule checking", "Write tests for a deny rule that checks"),
+        ("Write a Rego deny rule that", "Write Rego tests for code that"),
+        ("write rego deny rule that", "write rego tests for code that"),
+        ("deny if", "write tests for code that denies if"),
+        ("Create a Rego partial set rule", "Write Rego tests for this partial set rule"),
+        ("Create a standalone Rego helper method", "Write Rego tests for this standalone helper method"),
+        ("Write a Rego rule to", "Write Rego tests for code that"),
+        ("Make a deny rule checking", "Write tests for code that checks"),
         ("Write a Rego deny rule for", "Write Rego tests for"),
     ]:
         if old in text:
@@ -1630,25 +1693,27 @@ def _wrap_rule_and_test(variant_instr: str) -> str:
     text = variant_instr
     for old, new in [
         ("Write a Rego deny rule that",
-         "Write a Rego deny rule AND tests that"),
+         "Write Rego code AND tests that"),
         ("write rego deny rule that",
-         "write rego deny rule and tests that"),
+         "write rego code and tests that"),
         ("deny if",
-         "write a deny rule and tests. deny if"),
+         "write code and tests. deny if"),
         ("Create a Rego partial set rule",
          "Create a Rego partial set rule AND tests"),
+        ("Create a standalone Rego helper method",
+         "Create a standalone Rego helper method AND tests"),
         ("Write a Rego rule to",
-         "Write a Rego rule AND tests to"),
+         "Write Rego code AND tests to"),
         ("Make a deny rule checking",
-         "Make a deny rule and tests checking"),
+         "Write code and tests checking"),
         ("Write a Rego deny rule for",
-         "Write a Rego deny rule AND tests for"),
+         "Write Rego code AND tests for"),
     ]:
         if old in text:
             text = text.replace(old, new, 1)
             break
     else:
-        text = f"Write a Rego deny rule AND tests for: {text}"
+        text = f"Write Rego code AND tests for: {text}"
     return text
 
 
@@ -1705,7 +1770,7 @@ def make_messages(
 def _make_rule_from_test_instruction(test_code: str) -> str:
     return (
         f"Given these Rego tests:\n```rego\n{test_code.strip()}\n```\n\n"
-        f"Write the Rego deny rule that passes them."
+        f"Write the Rego policy code (deny rule or helper method) that passes them."
     )
 
 
@@ -1845,6 +1910,11 @@ def load_file(path: Path) -> str:
         return f.read()
 
 
+def infer_task_type(rule_code: str) -> str:
+    """Classify task output target as deny-rule or helper-method."""
+    return "deny_rule" if "deny contains msg if" in rule_code else "helper_method"
+
+
 def assemble() -> list[dict]:
     """Build the full SFT dataset in Qwen3 messages format."""
     instructions = load_instructions()
@@ -1873,6 +1943,7 @@ def assemble() -> list[dict]:
 
         rule_code = load_file(rule_path)
         test_code = load_file(test_path)
+        task_type = infer_task_type(rule_code)
 
         # --- Generate variant × output-type examples ---
         for variant_name, variant_fn in VARIANT_GENERATORS:
@@ -1890,6 +1961,7 @@ def assemble() -> list[dict]:
                     "tier": tier,
                     "variant": variant_name,
                     "type": out_type,
+                    "task_type": task_type,
                 })
 
         # --- Direction-reversal examples (canonical only) ---
@@ -1903,6 +1975,7 @@ def assemble() -> list[dict]:
             "tier": tier,
             "variant": "canonical",
             "type": "rule_from_test",
+            "task_type": task_type,
         })
 
         # test_from_rule
@@ -1915,6 +1988,7 @@ def assemble() -> list[dict]:
             "tier": tier,
             "variant": "canonical",
             "type": "test_from_rule",
+            "task_type": task_type,
         })
 
     write_and_reversal_count = len(examples)
@@ -1940,6 +2014,7 @@ def assemble() -> list[dict]:
 
         rule_code = load_file(rule_path)
         test_code = load_file(test_path)
+        task_type = infer_task_type(rule_code)
 
         for ambig_prompt, disambig_note in AMBIGUOUS_PROMPTS[task_id]:
             # Generate rule_only, test_only, and rule_and_test for each
@@ -1964,6 +2039,7 @@ def assemble() -> list[dict]:
                     "tier": tier,
                     "variant": "ambiguous",
                     "type": out_type,
+                    "task_type": task_type,
                 })
                 ambig_count += 1
 
@@ -1986,6 +2062,7 @@ def assemble() -> list[dict]:
             continue
 
         rule_code = load_file(rule_path)
+        task_type = infer_task_type(rule_code)
 
         for variant_rec in _generate_return_directive_variants(instr_rec, rule_code):
             think = _think_for_compositional(
@@ -2004,6 +2081,7 @@ def assemble() -> list[dict]:
                 "tier": tier,
                 "variant": "return_directive",
                 "type": "rule_only",
+                "task_type": task_type,
             })
             comp_count += 1
 
@@ -2027,6 +2105,7 @@ def assemble() -> list[dict]:
 
         rule_code = load_file(rule_path)
         test_code = load_file(test_path)
+        task_type = infer_task_type(rule_code)
 
         for variant_rec in _generate_custom_value_variants(
             instr_rec, rule_code, test_code,
@@ -2047,6 +2126,7 @@ def assemble() -> list[dict]:
                 "tier": tier,
                 "variant": f"custom_value_{variant_rec['sub_variant']}",
                 "type": "rule_only",
+                "task_type": task_type,
             })
             cv_count += 1
 
@@ -2059,6 +2139,7 @@ def assemble() -> list[dict]:
             response_code = mod_rec["modified_rule"].strip()
             think = _think_for_modification(mod_rec)
             messages = make_messages(user_content, response_code, think)
+            mod_task_type = infer_task_type(response_code)
 
             examples.append({
                 "messages": messages,
@@ -2066,6 +2147,7 @@ def assemble() -> list[dict]:
                 "tier": mod_rec["tier"],
                 "variant": variant_name,
                 "type": "modify_rule",
+                "task_type": mod_task_type,
             })
             mod_count += 1
 
@@ -2118,6 +2200,11 @@ def print_stats(examples: list[dict]) -> None:
     for v, c in variant_counts.most_common():
         print(f"  {v:20s}: {c}")
 
+    task_type_counts = Counter(ex["task_type"] for ex in examples)
+    print(f"\nBy task type:")
+    for tt in ["deny_rule", "helper_method"]:
+        print(f"  {tt:20s}: {task_type_counts.get(tt, 0)}")
+
     # Think trace stats
     think_lens = []
     for ex in examples:
@@ -2145,10 +2232,10 @@ def run_token_audit(examples: list[dict]) -> None:
         print("  Install: pip install transformers jinja2")
         return
 
-    print("\n--- Token Audit (Qwen3-4B tokenizer) ---")
+    print("\n--- Token Audit (Qwen3-14B tokenizer) ---")
     print("Loading tokenizer...")
 
-    tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B", trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-14B", trust_remote_code=True)
 
     token_counts = []
     for ex in examples:

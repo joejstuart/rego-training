@@ -1,0 +1,8 @@
+{
+  "task_id": "sft__policy_release_candidates__helper_methods__slsa_task_helper",
+  "package_name": "slsa_task_helper",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/sft/policy_release_candidates/helper_methods/slsa_task_helper.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/sft/policy_release_candidates/helper_methods/slsa_task_helper_test.rego",
+  "source_group": "policy_release_candidates"
+}

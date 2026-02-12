@@ -1,0 +1,8 @@
+{
+  "task_id": "policy__lib__tekton__bundles",
+  "package_name": "lib.tekton",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/policy/lib/tekton/bundles.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/policy/lib/tekton/bundles_test.rego",
+  "source_group": "policy_lib"
+}

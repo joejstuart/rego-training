@@ -1,0 +1,8 @@
+{
+  "task_id": "policy__lib__assertions",
+  "package_name": "lib",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/policy/lib/assertions.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/policy/lib/assertions_test.rego",
+  "source_group": "policy_lib"
+}

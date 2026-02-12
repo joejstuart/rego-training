@@ -3,7 +3,7 @@
 ## Purpose
 
 Combine validated (instruction, rule, test) triples from Phases 1-3 into the
-final SFT training dataset, optimized for **Qwen3-4B**. Each triple is expanded
+final SFT training dataset, optimized for **Qwen3-14B**. Each triple is expanded
 with multiple instruction variants across 6 output types, with a domain-specific
 system prompt (including schema map) and `<think>` reasoning traces.
 
@@ -18,9 +18,10 @@ HuggingFace's `SFTTrainer`:
 {
   "messages": [
     {"role": "system", "content": "You are an expert in the Rego policy language..."},
-    {"role": "user", "content": "Write a Rego deny rule that..."},
+    {"role": "user", "content": "Write Rego policy code (deny rule or helper method) that..."},
     {"role": "assistant", "content": "<think>\n...reasoning...\n</think>\n\n...code..."}
-  ]
+  ],
+  "task_type": "deny_rule | helper_method"
 }
 ```
 
@@ -28,10 +29,11 @@ HuggingFace's `SFTTrainer`:
 
 A consistent system prompt establishes the Rego expert persona and conventions:
 - Rego v1 syntax (`import rego.v1`)
-- `deny contains msg if { ... }` partial set pattern
+- choose the right output for the task: deny rule or standalone helper method
+- `deny contains msg if { ... }` when the task is a policy decision check
 - `some x in collection` iteration
 - `sprintf` for deny messages
-- `count(<pkg>.deny) == 0` / `> 0` test assertions
+- deny-rule tests: `count(<pkg>.deny) == 0` / `> 0`; helper tests assert helper output directly
 - **SLSA Attestation Schema Map** — a structured reference showing all valid
   `input.*` paths, enabling the model to resolve ambiguous field names
   (e.g., "digest.sha" → `input.predicate.materials[*].digest.sha256`)
@@ -67,7 +69,7 @@ Traces are also tailored to the output type:
 
 ### 4. Token-length audit
 
-The script includes a `--audit` flag that runs the Qwen3-4B tokenizer over
+The script includes a `--audit` flag that runs the Qwen3-14B tokenizer over
 every example and reports token statistics.
 
 ## Input
@@ -84,12 +86,12 @@ every example and reports token statistics.
 
 | Variant | Description | Example |
 |---------|-------------|---------|
-| **canonical** | Original clean instruction from Phase 1 | "Write a Rego deny rule that rejects..." |
-| **terse** | Minimal, telegram-style | "deny if predicateType wrong" |
+| **canonical** | Original clean instruction from Phase 1 | "Write Rego policy code that rejects..." |
+| **terse** | Minimal, telegram-style | "rego check if predicateType wrong" |
 | **verbose** | Over-explained, redundant | "I need you to write a Rego policy rule..." |
-| **poor_grammar** | Typos, missing articles, broken syntax | "write rego deny rule that reject attestation if..." |
+| **poor_grammar** | Typos, missing articles, broken syntax | "write rego rule/helper that reject attestation if..." |
 | **reordered** | Constraint before context | "If the predicateType is wrong, reject. Write a rule." |
-| **keyword_heavy** | Rego jargon throughout | "Create a partial set rule `deny contains msg if`..." |
+| **keyword_heavy** | Rego jargon throughout | "Create Rego policy code; use `deny contains msg if` when needed..." |
 | **vague** | Under-specified but answerable | "Write a rule to verify the SLSA predicate type." |
 | **casual** | Informal "can you" framing (modifications only) | "Can you rename the package from X to Y?" |
 | **ambiguous** | Schema-ambiguous prompts | "deny if materials digest.sha equals '1234'" |
@@ -187,7 +189,7 @@ The dataset is ready for use with `trl`'s `SFTTrainer`. Example config:
 from trl import SFTConfig, SFTTrainer
 
 training_args = SFTConfig(
-    output_dir="./rego-expert",
+    output_dir="./rego-expert-14b",
     max_seq_length=2048,         # covers p99 of our data
     per_device_train_batch_size=4,
     num_train_epochs=3,

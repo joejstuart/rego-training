@@ -1,0 +1,10 @@
+{
+  "task_id": "sft__policy_release_candidates__helper_methods__normalize_git_url_helper",
+  "status": "pass",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "opa_check_output": "",
+  "opa_test_output": "/Users/jstuart/Documents/repos/aiagent/sft/phase6.1_policy_candidates/output/tasks/sft__policy_release_candidates__helper_methods__normalize_git_url_helper/_validation/normalize_git_url_helper_test.rego:\ndata.normalize_git_url_helper_test.test_keeps_existing_prefix_and_suffix: PASS (658.208\u00b5s)\ndata.normalize_git_url_helper_test.test_adds_prefix_and_suffix_if_missing: PASS (826.625\u00b5s)\n--------------------------------------------------------------------------------\nPASS: 2/2\n",
+  "regal_lint": "pass",
+  "regal_lint_output": "{\n  \"violations\": [],\n  \"notices\": [\n    {\n      \"title\": \"implicit-future-keywords\",\n      \"description\": \"Rule made obsolete by rego.v1 capability\",\n      \"category\": \"imports\",\n      \"level\": \"notice\",\n      \"severity\": \"none\"\n    }\n  ],\n  \"summary\": {\n    \"files_scanned\": 1,\n    \"files_failed\": 0,\n    \"rules_skipped\": 0,\n    \"num_violations\": 0\n  }\n}\n"
+}

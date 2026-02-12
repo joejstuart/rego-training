@@ -1,0 +1,10 @@
+{
+  "task_id": "sft__policy_release_candidates__hermetic_task_candidate",
+  "status": "pass",
+  "opa_check": "pass",
+  "opa_test": "pass",
+  "opa_check_output": "",
+  "opa_test_output": "/Users/jstuart/Documents/repos/aiagent/sft/phase6.1_policy_candidates/output/tasks/sft__policy_release_candidates__hermetic_task_candidate/_validation/hermetic_task_candidate_test.rego:\ndata.hermetic_task_candidate_test.test_allow_when_required_tasks_are_hermetic: PASS (2.048417ms)\ndata.hermetic_task_candidate_test.test_deny_when_required_task_missing_hermetic_param: PASS (2.086833ms)\n--------------------------------------------------------------------------------\nPASS: 2/2\n",
+  "regal_lint": "pass",
+  "regal_lint_output": "{\n  \"violations\": [],\n  \"notices\": [\n    {\n      \"title\": \"implicit-future-keywords\",\n      \"description\": \"Rule made obsolete by rego.v1 capability\",\n      \"category\": \"imports\",\n      \"level\": \"notice\",\n      \"severity\": \"none\"\n    }\n  ],\n  \"summary\": {\n    \"files_scanned\": 1,\n    \"files_failed\": 0,\n    \"rules_skipped\": 0,\n    \"num_violations\": 0\n  }\n}\n"
+}

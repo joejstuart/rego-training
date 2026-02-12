@@ -1,0 +1,8 @@
+{
+  "task_id": "policy__lib__string_utils",
+  "package_name": "lib",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/policy/lib/string_utils.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/policy/lib/string_utils_test.rego",
+  "source_group": "policy_lib"
+}

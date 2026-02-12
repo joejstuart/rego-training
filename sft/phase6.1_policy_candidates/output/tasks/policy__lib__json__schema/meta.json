@@ -1,0 +1,8 @@
+{
+  "task_id": "policy__lib__json__schema",
+  "package_name": "lib.json",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/policy/lib/json/schema.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/policy/lib/json/schema_test.rego",
+  "source_group": "policy_lib"
+}

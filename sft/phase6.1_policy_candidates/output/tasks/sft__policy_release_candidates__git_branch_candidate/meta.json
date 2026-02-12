@@ -1,0 +1,8 @@
+{
+  "task_id": "sft__policy_release_candidates__git_branch_candidate",
+  "package_name": "git_branch_candidate",
+  "task_type": "deny_rule",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/sft/policy_release_candidates/git_branch_candidate.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/sft/policy_release_candidates/git_branch_candidate_test.rego",
+  "source_group": "policy_release_candidates"
+}

@@ -1,0 +1,8 @@
+{
+  "task_id": "policy__lib__tekton__task_results",
+  "package_name": "lib.tekton",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/policy/lib/tekton/task_results.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/policy/lib/tekton/task_results_test.rego",
+  "source_group": "policy_lib"
+}

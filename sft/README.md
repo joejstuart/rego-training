@@ -1,7 +1,7 @@
 # SFT Data Pipeline — Rego Expert for SLSA Provenance Attestations
 
 This directory contains the full pipeline for building a Supervised Fine-Tuning
-(SFT) dataset to teach Qwen3-4B to write expert Rego rules for SLSA provenance
+(SFT) dataset to teach Qwen3-14B to write expert Rego rules for SLSA provenance
 attestation verification.
 
 ## Approach
@@ -61,10 +61,30 @@ att.json
            │                    custom value compositional variants.
            ▼
 ┌──────────────────────────┐
-│  SFT Training            │  LoRA fine-tuning on Qwen3-4B
+│  Phase 6.1: Candidates   │  Normalize policy candidate rules/helpers
+│  phase6.1_policy_candidates/ │ into task directories + OPA validation.
+└──────────┬───────────────┘
+           │
+           ▼
+┌──────────────────────────┐
+│  Phase 6.2: Candidate    │  Assemble candidate tasks into messages
+│  Dataset                 │  format records with task_type tags.
+│  phase6.2_candidate_dataset/ │
+└──────────┬───────────────┘
+           │
+           ▼
+┌──────────────────────────┐
+│  Phase 6.3: Merge        │  Merge phase4 + phase6.2 into one
+│  Datasets                │  reproducible training dataset JSONL.
+│  phase6.3_dataset_merge/ │
+└──────────┬───────────────┘
+           │
+           ▼
+┌──────────────────────────┐
+│  SFT Training            │  LoRA fine-tuning on Qwen3-14B
 │  train.py                │  (A100 GPU, ~20GB VRAM)
 └──────────┬───────────────┘
-           │  output/rego-expert/
+           │  output/rego-expert-14b/
            ▼
 ┌──────────────────────────┐
 │  GRPO (Stage 2)          │  Reinforcement learning for reasoning
@@ -136,7 +156,7 @@ sft/
 ├── train.py                           ← SFT training script (LoRA default)
 ├── inference.py                       ← Inference script (LoRA stacking support)
 └── output/
-    └── rego-expert/                   ← Trained model checkpoints
+    └── rego-expert-14b/               ← Trained model checkpoints
 ```
 
 ## Prerequisites
@@ -186,8 +206,18 @@ python phase5_modifications/generate_modifications.py
 # Phase 4: Assemble final SFT dataset (includes all variants + Phase 5)
 python phase4_dataset/assemble_dataset.py
 
+# Phase 6.1: Build phase-style tasks from policy_release_candidates
+python phase6.1_policy_candidates/build_tasks.py
+
+# Phase 6.2: Assemble candidate-only SFT records
+python phase6.2_candidate_dataset/assemble_dataset.py
+
+# Phase 6.3: Merge phase4 dataset + phase6.2 dataset
+python phase6.3_dataset_merge/merge_datasets.py
+
 # Train (on A100 GPU)
 python train.py              # LoRA (default, ~20GB VRAM)
+python train.py --dataset ./phase6.3_dataset_merge/output/rego_sft_merged.jsonl
 python train.py --no-lora    # Full fine-tuning (~60GB VRAM)
 python train.py --dry-run    # Print config without training
 ```
@@ -200,22 +230,22 @@ After training, use the inference script:
 cd sft/
 
 # Interactive chat
-python inference.py --model ./output/rego-expert
+python inference.py --model ./output/rego-expert-14b
 
 # Single prompt
-python inference.py --model ./output/rego-expert \
-    --prompt "Write a Rego deny rule that rejects if predicateType is wrong"
+python inference.py --model ./output/rego-expert-14b \
+    --prompt "Write Rego policy code to validate predicateType"
 
 # Use the base model (no fine-tuning) for comparison
-python inference.py --model Qwen/Qwen3-4B
+python inference.py --model Qwen/Qwen3-14B
 
 # Disable thinking (faster, no <think> block)
-python inference.py --model ./output/rego-expert --no-think
+python inference.py --model ./output/rego-expert-14b --no-think
 
 # GRPO model (stacks SFT + GRPO LoRAs)
 python inference.py \
-    --model ../grpo/output/rego-expert-grpo \
-    --sft-model ./output/rego-expert \
+    --model ../grpo/output/rego-expert-grpo-14b \
+    --sft-model ./output/rego-expert-14b \
     --prompt "Write a deny rule that checks task status"
 ```
 

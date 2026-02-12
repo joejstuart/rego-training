@@ -1,0 +1,8 @@
+{
+  "task_id": "policy__lib__k8s__k8s",
+  "package_name": "lib.k8s",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/policy/lib/k8s/k8s.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/policy/lib/k8s/k8s_test.rego",
+  "source_group": "policy_lib"
+}

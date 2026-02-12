@@ -1,0 +1,8 @@
+{
+  "task_id": "policy__lib__sbom__sbom",
+  "package_name": "lib.sbom",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/policy/lib/sbom/sbom.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/policy/lib/sbom/sbom_test.rego",
+  "source_group": "policy_lib"
+}

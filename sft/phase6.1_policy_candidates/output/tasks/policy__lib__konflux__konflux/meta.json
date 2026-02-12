@@ -1,0 +1,8 @@
+{
+  "task_id": "policy__lib__konflux__konflux",
+  "package_name": "lib.konflux",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/policy/lib/konflux/konflux.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/policy/lib/konflux/konflux_test.rego",
+  "source_group": "policy_lib"
+}

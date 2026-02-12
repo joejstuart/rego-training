@@ -1,0 +1,8 @@
+{
+  "task_id": "sft__policy_release_candidates__provenance_materials_candidate",
+  "package_name": "provenance_materials_candidate",
+  "task_type": "deny_rule",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/sft/policy_release_candidates/provenance_materials_candidate.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/sft/policy_release_candidates/provenance_materials_candidate_test.rego",
+  "source_group": "policy_release_candidates"
+}

@@ -1,0 +1,8 @@
+{
+  "task_id": "policy__lib__arrays__array_helpers",
+  "package_name": "lib.arrays",
+  "task_type": "helper_method",
+  "source_rule": "/Users/jstuart/Documents/repos/aiagent/policy/lib/arrays/array_helpers.rego",
+  "source_test": "/Users/jstuart/Documents/repos/aiagent/policy/lib/arrays/array_helpers_test.rego",
+  "source_group": "policy_lib"
+}
