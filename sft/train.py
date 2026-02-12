@@ -177,6 +177,8 @@ def print_config(args: argparse.Namespace, train_ds: Dataset, eval_ds: Dataset |
 def main() -> None:
     args = parse_args()
     use_4bit = (not args.no_lora) and (not args.no_4bit)
+    bf16_ok = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    compute_dtype = torch.bfloat16 if bf16_ok else torch.float16
 
     # ------------------------------------------------------------------
     # Load dataset
@@ -191,6 +193,8 @@ def main() -> None:
     # Print config
     # ------------------------------------------------------------------
     print_config(args, train_ds, eval_ds)
+    if not bf16_ok:
+        print("  WARNING: bf16 not supported on this GPU; falling back to fp16.")
 
     if args.dry_run:
         print("\n  [DRY RUN] — exiting without training.\n")
@@ -220,7 +224,7 @@ def main() -> None:
         model_kwargs.update({
             "quantization_config": BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_compute_dtype=compute_dtype,
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True,
             ),
@@ -228,7 +232,7 @@ def main() -> None:
             "low_cpu_mem_usage": True,
         })
     else:
-        model_kwargs["torch_dtype"] = torch.bfloat16
+        model_kwargs["torch_dtype"] = compute_dtype
 
     model = AutoModelForCausalLM.from_pretrained(args.model, **model_kwargs)
 
@@ -277,8 +281,10 @@ def main() -> None:
         max_grad_norm=args.max_grad_norm,
 
         # Precision
-        bf16=True,
-        bf16_full_eval=True,
+        bf16=bf16_ok,
+        bf16_full_eval=bf16_ok,
+        fp16=not bf16_ok,
+        fp16_full_eval=not bf16_ok,
 
         # Logging
         logging_steps=10,
