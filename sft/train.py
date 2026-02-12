@@ -10,6 +10,9 @@ Usage:
     # LoRA (default) — ~20GB VRAM, fast
     python train.py
 
+    # LoRA without 4-bit quantization (higher VRAM)
+    python train.py --no-4bit
+
     # Full fine-tuning — ~60GB VRAM, slower, but stronger
     python train.py --no-lora
 
@@ -57,6 +60,7 @@ DEFAULTS = {
     "lora_r": 16,
     "lora_alpha": 32,
     "lora_dropout": 0.05,
+    "use_4bit": True,             # QLoRA default for 14B on ~24GB class GPUs
 }
 
 
@@ -102,6 +106,8 @@ def parse_args() -> argparse.Namespace:
     # LoRA
     p.add_argument("--no-lora", action="store_true",
                     help="Disable LoRA and do full fine-tuning.")
+    p.add_argument("--no-4bit", action="store_true",
+                    help="Disable 4-bit QLoRA loading for LoRA runs (uses more VRAM).")
     p.add_argument("--lora-r", type=int, default=DEFAULTS["lora_r"],
                     help="LoRA rank.")
     p.add_argument("--lora-alpha", type=int, default=DEFAULTS["lora_alpha"],
@@ -142,6 +148,7 @@ def print_config(args: argparse.Namespace, train_ds: Dataset, eval_ds: Dataset |
     steps_per_epoch = len(train_ds) // effective_batch
     total_steps = steps_per_epoch * args.epochs
 
+    use_4bit = (not args.no_lora) and (not args.no_4bit)
     print("=" * 60)
     print("  SFT Training Configuration")
     print("=" * 60)
@@ -149,6 +156,7 @@ def print_config(args: argparse.Namespace, train_ds: Dataset, eval_ds: Dataset |
     print(f"  Dataset:          {args.dataset}")
     print(f"  Output:           {args.output_dir}")
     print(f"  LoRA:             {'disabled' if args.no_lora else f'r={args.lora_r}, alpha={args.lora_alpha}'}")
+    print(f"  Quantization:     {'4-bit QLoRA' if use_4bit else 'none (bf16)'}")
     print(f"  Precision:        bf16")
     print()
     print(f"  Train examples:   {len(train_ds)}")
@@ -168,6 +176,7 @@ def print_config(args: argparse.Namespace, train_ds: Dataset, eval_ds: Dataset |
 
 def main() -> None:
     args = parse_args()
+    use_4bit = (not args.no_lora) and (not args.no_4bit)
 
     # ------------------------------------------------------------------
     # Load dataset
@@ -205,9 +214,21 @@ def main() -> None:
     print("Loading model...")
     model_kwargs = {
         "trust_remote_code": True,
-        "dtype": torch.bfloat16,
         "attn_implementation": "sdpa",  # PyTorch native; use "flash_attention_2" if flash_attn is installed
     }
+    if use_4bit:
+        model_kwargs.update({
+            "quantization_config": BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+            ),
+            "device_map": "auto",
+            "low_cpu_mem_usage": True,
+        })
+    else:
+        model_kwargs["torch_dtype"] = torch.bfloat16
 
     model = AutoModelForCausalLM.from_pretrained(args.model, **model_kwargs)
 
@@ -216,7 +237,10 @@ def main() -> None:
     # ------------------------------------------------------------------
     peft_config = None
     if not args.no_lora:
-        from peft import LoraConfig, TaskType
+        from peft import LoraConfig, TaskType, prepare_model_for_kbit_training
+
+        if use_4bit:
+            model = prepare_model_for_kbit_training(model)
 
         peft_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
@@ -274,6 +298,7 @@ def main() -> None:
         dataloader_num_workers=4,
         gradient_checkpointing=not args.no_lora,  # save memory with LoRA
         gradient_checkpointing_kwargs={"use_reentrant": False} if not args.no_lora else None,
+        optim="paged_adamw_8bit" if use_4bit else "adamw_torch",
 
         # Remove unused columns (our dataset has metadata fields)
         remove_unused_columns=True,
