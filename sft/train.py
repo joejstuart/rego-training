@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SFT training script for Qwen3-14B on SLSA provenance attestation Rego rules.
+"""SFT training script for Qwen3-8B on SLSA provenance attestation Rego rules.
 
 Trains using LoRA (default) or full fine-tuning on the dataset produced by
 Phase 4 (phase4_dataset/output/rego_sft.jsonl).
@@ -20,7 +20,7 @@ Usage:
     python train.py --epochs 5 --lr 1e-5 --batch-size 8
 
     # Resume from checkpoint
-    python train.py --resume-from ./output/rego-expert-14b/checkpoint-300
+    python train.py --resume-from ./output/rego-expert-8b/checkpoint-300
 
     # Dry run (no training, just prints config and dataset stats)
     python train.py --dry-run
@@ -39,15 +39,15 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 # ---------------------------------------------------------------------------
-# Defaults — tuned for Qwen3-14B on a single A100 80GB
+# Defaults — tuned for Qwen3-8B on a single A100 80GB
 # ---------------------------------------------------------------------------
 DEFAULTS = {
-    "model": "Qwen/Qwen3-14B",
+    "model": "Qwen/Qwen3-8B",
     "dataset": str(Path(__file__).resolve().parent / "phase4_dataset" / "output" / "rego_sft.jsonl"),
-    "output_dir": str(Path(__file__).resolve().parent / "output" / "rego-expert-14b"),
+    "output_dir": str(Path(__file__).resolve().parent / "output" / "rego-expert-8b"),
     "max_seq_length": 2048,       # covers p99≈1853, p100≈1995 (includes schema in system prompt)
-    "batch_size": 2,              # per-device; safer default for 14B memory
-    "grad_accum": 8,              # effective batch size = 16
+    "batch_size": 4,              # per-device; good throughput default for 8B + QLoRA
+    "grad_accum": 4,              # effective batch size = 16
     "epochs": 3,                  # small dataset → multiple passes
     "lr": 2e-5,                   # standard SFT learning rate
     "lr_scheduler": "cosine",
@@ -60,13 +60,13 @@ DEFAULTS = {
     "lora_r": 16,
     "lora_alpha": 32,
     "lora_dropout": 0.05,
-    "use_4bit": True,             # QLoRA default for 14B on ~24GB class GPUs
+    "use_4bit": True,             # QLoRA default keeps memory usage comfortable on 8B
 }
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="SFT training for Rego expert (Qwen3-14B)",
+        description="SFT training for Rego expert (Qwen3-8B)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 

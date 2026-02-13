@@ -141,7 +141,7 @@ def _extract_rego_code(text: str) -> Optional[str]:
 # Rego that doesn't follow the deny-rule pattern we need.
 # ===========================================================================
 
-def reward_format(completions, **kwargs) -> list[float]:
+def reward_format(completions, task_type=None, **kwargs) -> list[float]:
     """Reward structural compliance with Rego deny-rule conventions.
 
     Checks for:
@@ -158,9 +158,10 @@ def reward_format(completions, **kwargs) -> list[float]:
     mentioning patterns in ``<think>`` traces without using them in the code.
     """
     scores = []
-    for completion in completions:
+    for i, completion in enumerate(completions):
         response = completion[0]["content"]
         code = _extract_rego_code(response) or ""
+        tt = task_type[i] if isinstance(task_type, list) and i < len(task_type) else "deny_rule"
         score = 0.0
 
         # Reasoning traces — check full response (these ARE about the response structure)
@@ -170,10 +171,25 @@ def reward_format(completions, **kwargs) -> list[float]:
         # Critical structural elements — check CODE only (prevents think-tag gaming)
         score += 1.0 if re.search(r"^package\s+\w+", code, re.M) else -2.0
         score += 0.5 if "import rego.v1" in code else -1.0
-        score += 2.0 if "deny contains msg if" in code else -3.0
+        if tt == "helper_method":
+            # Helper tasks shouldn't be forced into deny-pattern outputs.
+            helper_like = (
+                "deny contains msg if" not in code
+                and (
+                    bool(re.search(r"\b[a-zA-Z_]\w*\s*\(", code))
+                    or bool(re.search(r"\b[a-zA-Z_]\w*\s*:=", code))
+                    or bool(re.search(r"\b[a-zA-Z_]\w*\s+if\s+\{", code))
+                )
+            )
+            score += 2.0 if helper_like else -3.0
+        else:
+            score += 2.0 if "deny contains msg if" in code else -3.0
 
         # Nice-to-have — check CODE only
-        score += 0.5 if "sprintf" in code else 0.0
+        if tt == "helper_method":
+            score += 0.5 if " := " in code else 0.0
+        else:
+            score += 0.5 if "sprintf" in code else 0.0
 
         scores.append(score)
     return scores

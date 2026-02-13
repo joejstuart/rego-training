@@ -9,6 +9,11 @@ Merge:
 
 into one reproducible training JSONL file.
 
+The merge step also normalizes metadata so each record has:
+
+- `source` (`phase4` or `phase6_policy_candidates`)
+- `task_type` (`deny_rule` or `helper_method`)
+
 ## Input
 
 - `sft/phase4_dataset/output/rego_sft.jsonl`

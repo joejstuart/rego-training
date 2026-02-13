@@ -3,7 +3,7 @@
 ## Purpose
 
 Normalize `sft/policy_release_candidates` into a phase-style task layout
-compatible with the rest of the pipeline, and validate each task with OPA.
+compatible with the rest of the pipeline, and validate each task with OPA and Regal.
 
 Also ingests helper-oriented Rego library files from:
 
@@ -13,7 +13,8 @@ This phase creates one task directory per candidate package with:
 
 - `<package>.rego`
 - `<package>_test.rego`
-- `result.json` (`pass` / `fail` / `error`)
+- `_validation/` temporary validation workspace (generated during run)
+- `result.json` (`pass` / `fail` / `error`) with `opa_check`, `opa_test`, `regal_lint`
 - `meta.json` (`task_type`, source path)
 
 ## Input

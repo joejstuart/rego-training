@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Build the GRPO prompt dataset from Phase 1 instructions + Phase 3 rules/tests.
+"""Build the GRPO prompt dataset from core Phase 1/3 tasks + Phase 6 helper tasks.
 
-Reads the SFT-pipeline artefacts (instructions, rules, tests, ambiguous prompts)
+Reads SFT-pipeline artefacts (instructions, rules, tests, ambiguous prompts)
+plus validated Phase 6.1 candidate/helper tasks
 and assembles a JSONL dataset where each record has:
 
   - prompt:        list of messages [system, user]  (what the model sees)
@@ -9,6 +10,7 @@ and assembles a JSONL dataset where each record has:
   - package_name:  Rego package name for reward_opa_test
   - rule_code:     ground-truth rule (reference only, not shown to the model)
   - task_id:       identifier linking back to the SFT pipeline
+  - task_type:     deny_rule | helper_method
 
 Prompt variants:
   - canonical / terse / vague / poor_grammar — instruction rewording
@@ -53,6 +55,7 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 SFT_ROOT = PROJECT_ROOT / "sft"
 INSTRUCTIONS_PATH = SFT_ROOT / "phase1_instructions" / "output" / "instructions.jsonl"
 PHASE3_TASKS = SFT_ROOT / "phase3_rules" / "output" / "tasks"
+PHASE61_TASKS = SFT_ROOT / "phase6.1_policy_candidates" / "output" / "tasks"
 OUTPUT_DIR = SCRIPT_DIR / "output"
 OUTPUT_FILE = OUTPUT_DIR / "grpo_prompts.jsonl"
 
@@ -67,59 +70,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # System prompt — identical to what the model sees during SFT and GRPO
 # ===========================================================================
 
-SYSTEM_PROMPT = """\
-You are an expert in the Rego policy language (Open Policy Agent). \
-You specialize in writing deny rules for verifying SLSA provenance attestations.
-
-Conventions you always follow:
-- Use `import rego.v1` (Rego v1 syntax).
-- Use `deny contains msg if { ... }` (partial set rules). Rules fire when something is WRONG.
-- Use `some x in collection` to iterate (Rego v1 iteration, not indexing).
-- Use `sprintf` to produce human-readable deny messages.
-- The attestation document is accessed via `input`.
-- Tests use `count(<pkg>.deny) == 0` for positive cases and `count(<pkg>.deny) > 0` for negative cases.
-
-SLSA attestation schema (field → JSON path):
-- _type: ._type
-- predicateType: .predicateType
-- subject[*].name: .subject[*].name
-- subject[*].digest.sha256: .subject[*].digest.sha256
-- buildType: .predicate.buildType
-- builder.id: .predicate.builder.id
-- materials: .predicate.materials (array)
-- materials[*].uri: .predicate.materials[*].uri
-- materials[*].digest.sha256: .predicate.materials[*].digest.sha256
-- materials[*].digest.sha1: .predicate.materials[*].digest.sha1
-- invocation.parameters.git-url: .predicate.invocation.parameters.git-url
-- invocation.parameters.revision: .predicate.invocation.parameters.revision
-- invocation.parameters.output-image: .predicate.invocation.parameters.output-image
-- invocation.parameters.hermetic: .predicate.invocation.parameters.hermetic
-- invocation.parameters.rebuild: .predicate.invocation.parameters.rebuild
-- invocation.parameters.skip-checks: .predicate.invocation.parameters.skip-checks
-- metadata.buildStartedOn: .predicate.metadata.buildStartedOn
-- metadata.buildFinishedOn: .predicate.metadata.buildFinishedOn
-- metadata.reproducible: .predicate.metadata.reproducible
-- tasks[*].name: .predicate.buildConfig.tasks[*].name
-- tasks[*].status: .predicate.buildConfig.tasks[*].status
-- tasks[*].startedOn: .predicate.buildConfig.tasks[*].startedOn
-- tasks[*].finishedOn: .predicate.buildConfig.tasks[*].finishedOn
-- tasks[*].serviceAccountName: .predicate.buildConfig.tasks[*].serviceAccountName
-- tasks[*].ref.resolver: .predicate.buildConfig.tasks[*].ref.resolver
-- tasks[*].ref.params[*].name: .predicate.buildConfig.tasks[*].ref.params[*].name
-- tasks[*].ref.params[*].value: .predicate.buildConfig.tasks[*].ref.params[*].value
-- tasks[*].steps: .predicate.buildConfig.tasks[*].steps (array)
-- tasks[*].steps[*].entryPoint: .predicate.buildConfig.tasks[*].steps[*].entryPoint
-- tasks[*].steps[*].environment.container: .predicate.buildConfig.tasks[*].steps[*].environment.container
-- tasks[*].steps[*].environment.image: .predicate.buildConfig.tasks[*].steps[*].environment.image
-- tasks[*].results[*].name: .predicate.buildConfig.tasks[*].results[*].name
-- tasks[*].results[*].type: .predicate.buildConfig.tasks[*].results[*].type
-- tasks[*].results[*].value: .predicate.buildConfig.tasks[*].results[*].value
-- tasks[*].invocation.parameters.HERMETIC: .predicate.buildConfig.tasks[*].invocation.parameters.HERMETIC
-- tasks[*].invocation.parameters.TLSVERIFY: .predicate.buildConfig.tasks[*].invocation.parameters.TLSVERIFY
-- tasks[*].invocation.parameters.COMMIT_SHA: .predicate.buildConfig.tasks[*].invocation.parameters.COMMIT_SHA
-- tasks[*].invocation.parameters.DOCKERFILE: .predicate.buildConfig.tasks[*].invocation.parameters.DOCKERFILE
-- tasks[*].invocation.parameters.IMAGE: .predicate.buildConfig.tasks[*].invocation.parameters.IMAGE\
-"""
+from sft.phase4_dataset.assemble_dataset import SYSTEM_PROMPT
 
 
 # ===========================================================================
@@ -145,6 +96,49 @@ def _load_phase3_result(task_id: str) -> dict | None:
     if result.get("status") != "pass":
         return None
     return result
+
+
+def _load_phase61_tasks() -> list[dict]:
+    records = []
+    if not PHASE61_TASKS.exists():
+        return records
+    for task_dir in sorted(PHASE61_TASKS.iterdir()):
+        if not task_dir.is_dir():
+            continue
+        meta_path = task_dir / "meta.json"
+        result_path = task_dir / "result.json"
+        if not meta_path.exists() or not result_path.exists():
+            continue
+        meta = json.loads(meta_path.read_text())
+        result = json.loads(result_path.read_text())
+        if result.get("status") != "pass":
+            continue
+        pkg = meta["package_name"]
+        rule_path = task_dir / f"{pkg}.rego"
+        test_path = task_dir / f"{pkg}_test.rego"
+        if not rule_path.exists() or not test_path.exists():
+            continue
+        records.append({
+            "task_id": meta["task_id"],
+            "package_name": pkg,
+            "task_type": meta.get("task_type", "deny_rule"),
+            "rule_code": rule_path.read_text(),
+            "test_code": test_path.read_text(),
+        })
+    return records
+
+
+def _phase6_prompt_variants(task: dict) -> list[tuple[str, str]]:
+    task_id = task["task_id"]
+    if task["task_type"] == "helper_method":
+        return [
+            ("phase6_helper_canonical", f"Write a standalone Rego helper method in package `{task_id}` that satisfies the expected checks."),
+            ("phase6_helper_reuse", f"Create reusable helper logic in package `{task_id}` with deterministic return behavior."),
+            ("phase6_helper_behavior", f"Given the task, implement helper code for `{task_id}` and ensure behavior is explicit."),
+        ]
+    return [
+        ("phase6_canonical", f"Write Rego policy code in package `{task_id}` that satisfies the expected checks."),
+    ]
 
 
 # ===========================================================================
@@ -429,6 +423,7 @@ def _build_error_fix_records(instructions: list[dict]) -> list[dict]:
                 "rule_code": rule_code,
                 "task_id": task_id,
                 "variant": variant_label,
+                "task_type": "deny_rule",
             })
 
     if skipped:
@@ -481,6 +476,7 @@ def build_dataset() -> list[dict]:
                 "rule_code": rule_code,
                 "task_id": task_id,
                 "variant": label,
+                "task_type": "deny_rule",
             })
 
     # ── Ambiguous prompts (highest value for GRPO reasoning) ─────────────
@@ -517,6 +513,7 @@ def build_dataset() -> list[dict]:
                 "rule_code": rule_code,
                 "task_id": task_id,
                 "variant": "ambiguous",
+                "task_type": "deny_rule",
             })
 
     # ── Custom value / operator flip variants ─────────────────────────────
@@ -553,10 +550,31 @@ def build_dataset() -> list[dict]:
                 "rule_code": variant_rec["modified_rule"],
                 "task_id": task_id,
                 "variant": f"custom_value_{variant_rec['sub_variant']}",
+                "task_type": "deny_rule",
             })
             cv_count += 1
 
     print(f"  Custom value variants: {cv_count}")
+
+    # ── Phase 6 candidate/helper tasks ────────────────────────────────────
+    phase6_tasks = _load_phase61_tasks()
+    phase6_count = 0
+    for task in phase6_tasks:
+        for variant_label, user_prompt in _phase6_prompt_variants(task):
+            records.append({
+                "prompt": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "test_code": task["test_code"],
+                "package_name": task["package_name"],
+                "rule_code": task["rule_code"],
+                "task_id": task["task_id"],
+                "variant": variant_label,
+                "task_type": task["task_type"],
+            })
+            phase6_count += 1
+    print(f"  Phase 6 variants: {phase6_count}")
 
     # ── Error-fix prompts (broken code + real error output) ──────────────
     print("  Generating error-fix variants (running opa/regal on corrupted rules)...")

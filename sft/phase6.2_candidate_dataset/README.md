@@ -20,7 +20,8 @@ Each line includes:
 - `messages`
 - `task_id`
 - `tier` (fixed to `3` for this phase)
-- `variant` (`phase6_canonical`)
+- `variant`
+  - deny/general: `phase6_canonical`
   - helper variants: `phase6_helper_*`
 - `type` (`rule_only`, `test_only`, `rule_and_test`, `rule_from_test`, `test_from_rule`)
 - `task_type` (`deny_rule` or `helper_method`)

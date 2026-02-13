@@ -3,7 +3,7 @@
 ## Purpose
 
 Combine validated (instruction, rule, test) triples from Phases 1-3 into the
-final SFT training dataset, optimized for **Qwen3-14B**. Each triple is expanded
+final SFT training dataset, optimized for **Qwen3-8B**. Each triple is expanded
 with multiple instruction variants across 6 output types, with a domain-specific
 system prompt (including schema map) and `<think>` reasoning traces.
 
@@ -69,7 +69,7 @@ Traces are also tailored to the output type:
 
 ### 4. Token-length audit
 
-The script includes a `--audit` flag that runs the Qwen3-14B tokenizer over
+The script includes a `--audit` flag that runs the Qwen3-8B tokenizer over
 every example and reports token statistics.
 
 ## Input
@@ -189,7 +189,7 @@ The dataset is ready for use with `trl`'s `SFTTrainer`. Example config:
 from trl import SFTConfig, SFTTrainer
 
 training_args = SFTConfig(
-    output_dir="./rego-expert-14b",
+    output_dir="./rego-expert-8b",
     max_seq_length=2048,         # covers p99 of our data
     per_device_train_batch_size=4,
     num_train_epochs=3,
