@@ -1,7 +1,7 @@
 # SFT Data Pipeline — Rego Expert for SLSA Provenance Attestations
 
 This directory contains the full pipeline for building a Supervised Fine-Tuning
-(SFT) dataset to teach Qwen3-8B to write expert Rego rules for SLSA provenance
+(SFT) dataset to teach Qwen3-4B to write expert Rego rules for SLSA provenance
 attestation verification.
 
 ## Approach
@@ -81,10 +81,10 @@ att.json
            │
            ▼
 ┌──────────────────────────┐
-│  SFT Training            │  LoRA fine-tuning on Qwen3-8B
+│  SFT Training            │  LoRA fine-tuning on Qwen3-4B
 │  train.py                │  (A100 GPU; memory use depends on batch settings)
 └──────────┬───────────────┘
-           │  output/rego-expert-8b/
+           │  output/rego-expert-4b/
            ▼
 ┌──────────────────────────┐
 │  GRPO (Stage 2)          │  Reinforcement learning for reasoning
@@ -160,7 +160,7 @@ sft/
 ├── train.py                           ← SFT training script (LoRA default)
 ├── inference.py                       ← Inference script (LoRA stacking support)
 └── output/
-    └── rego-expert-8b/               ← Trained model checkpoints
+    └── rego-expert-4b/               ← Trained model checkpoints
 ```
 
 ## Prerequisites
@@ -234,22 +234,22 @@ After training, use the inference script:
 cd sft/
 
 # Interactive chat
-python inference.py --model ./output/rego-expert-8b
+python inference.py --model ./output/rego-expert-4b
 
 # Single prompt
-python inference.py --model ./output/rego-expert-8b \
+python inference.py --model ./output/rego-expert-4b \
     --prompt "Write Rego policy code to validate predicateType"
 
 # Use the base model (no fine-tuning) for comparison
-python inference.py --model Qwen/Qwen3-8B
+python inference.py --model Qwen/Qwen3-4B
 
 # Disable thinking (faster, no <think> block)
-python inference.py --model ./output/rego-expert-8b --no-think
+python inference.py --model ./output/rego-expert-4b --no-think
 
 # GRPO model (stacks SFT + GRPO LoRAs)
 python inference.py \
-    --model ../grpo/output/rego-expert-grpo-8b \
-    --sft-model ./output/rego-expert-8b \
+    --model ../grpo/output/rego-expert-grpo-4b \
+    --sft-model ./output/rego-expert-4b \
     --prompt "Write a deny rule that checks task status"
 ```
 

@@ -5,7 +5,7 @@ This is Stage 2 of the training pipeline:
   1. SFT  (sft/train.py)        → teaches Rego syntax, deny patterns, schema grounding
   2. GRPO (this script)          → teaches the model to REASON through ambiguous prompts
 
-Architecture (adapted from the Unsloth Qwen3-8B GRPO notebook):
+Architecture (adapted from the Unsloth Qwen3-4B GRPO notebook):
   - Loads the SFT-trained model (LoRA or merged)
   - Reads a pre-built GRPO dataset (grpo/output/grpo_prompts.jsonl)
   - Uses 5 stacked reward functions scored by OPA / Regal evaluation
@@ -73,7 +73,7 @@ Usage:
     python -m grpo.train
 
     # Point to a specific SFT checkpoint
-    python -m grpo.train --sft-model ./sft/output/rego-expert-8b
+    python -m grpo.train --sft-model ./sft/output/rego-expert-4b
 
     # Adjust training
     python -m grpo.train --max-steps 200 --num-generations 8
@@ -100,15 +100,15 @@ GRPO_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = GRPO_DIR.parent
 SFT_ROOT = PROJECT_ROOT / "sft"
 DATASET_PATH = GRPO_DIR / "output" / "grpo_prompts.jsonl"
-DEFAULT_SFT_MODEL = str(SFT_ROOT / "output" / "rego-expert-8b")
-DEFAULT_OUTPUT_DIR = str(GRPO_DIR / "output" / "rego-expert-grpo-8b")
+DEFAULT_SFT_MODEL = str(SFT_ROOT / "output" / "rego-expert-4b")
+DEFAULT_OUTPUT_DIR = str(GRPO_DIR / "output" / "rego-expert-grpo-4b")
 
 
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
 DEFAULTS = {
-    "base_model": "Qwen/Qwen3-8B",
+    "base_model": "Qwen/Qwen3-4B",
     "sft_model": DEFAULT_SFT_MODEL,
     "output_dir": DEFAULT_OUTPUT_DIR,
     "max_seq_length": 2048,

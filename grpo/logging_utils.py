@@ -15,7 +15,7 @@ Analysis:
     # Quick look
     python -c "
     import json, pandas as pd
-    rows = [json.loads(l) for l in open('grpo/output/rego-expert-grpo-8b/step_log.jsonl')]
+    rows = [json.loads(l) for l in open('grpo/output/rego-expert-grpo-4b/step_log.jsonl')]
     df = pd.json_normalize(rows)
     print(df[['step','task_id','variant','reward_mean','had_learning_signal']].to_string())
     "

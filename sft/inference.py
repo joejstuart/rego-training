@@ -5,23 +5,23 @@ Supports LoRA adapters (default from train.py) and merged models.
 
 Usage:
     # Interactive chat
-    python inference.py --model ./output/rego-expert-8b
+    python inference.py --model ./output/rego-expert-4b
 
     # Single prompt
-    python inference.py --model ./output/rego-expert-8b \
+    python inference.py --model ./output/rego-expert-4b \
         --prompt "Write Rego policy code to validate predicateType"
 
     # From a file
-    python inference.py --model ./output/rego-expert-8b --prompt-file prompt.txt
+    python inference.py --model ./output/rego-expert-4b --prompt-file prompt.txt
 
     # Use the base model (no fine-tuning) for comparison
-    python inference.py --model Qwen/Qwen3-8B
+    python inference.py --model Qwen/Qwen3-4B
 
     # Disable thinking (faster, no <think> block)
-    python inference.py --model ./output/rego-expert-8b --no-think
+    python inference.py --model ./output/rego-expert-4b --no-think
 
     # Adjust generation params
-    python inference.py --model ./output/rego-expert-8b --max-tokens 1024 --temperature 0.3
+    python inference.py --model ./output/rego-expert-4b --max-tokens 1024 --temperature 0.3
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--model", type=str, required=True,
                     help="Model path: LoRA adapter dir, merged model dir, or HF model name.")
-    p.add_argument("--base-model", type=str, default="Qwen/Qwen3-8B",
+    p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B",
                     help="Base model (only needed if --model points to a LoRA adapter).")
     p.add_argument("--sft-model", type=str, default=None,
                     help="SFT LoRA adapter to merge before applying --model LoRA. "

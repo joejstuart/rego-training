@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SFT training script for Qwen3-8B on SLSA provenance attestation Rego rules.
+"""SFT training script for Qwen3-4B on SLSA provenance attestation Rego rules.
 
 Trains using LoRA (default) or full fine-tuning on the dataset produced by
 Phase 4 (phase4_dataset/output/rego_sft.jsonl).
@@ -20,7 +20,7 @@ Usage:
     python train.py --epochs 5 --lr 1e-5 --batch-size 8
 
     # Resume from checkpoint
-    python train.py --resume-from ./output/rego-expert-8b/checkpoint-300
+    python train.py --resume-from ./output/rego-expert-4b/checkpoint-300
 
     # Dry run (no training, just prints config and dataset stats)
     python train.py --dry-run
@@ -39,15 +39,15 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 # ---------------------------------------------------------------------------
-# Defaults — tuned for Qwen3-8B on a single A100 80GB
+# Defaults — tuned for Qwen3-4B on a single A100 80GB
 # ---------------------------------------------------------------------------
 DEFAULTS = {
-    "model": "Qwen/Qwen3-8B",
+    "model": "Qwen/Qwen3-4B",
     "dataset": str(Path(__file__).resolve().parent / "phase4_dataset" / "output" / "rego_sft.jsonl"),
-    "output_dir": str(Path(__file__).resolve().parent / "output" / "rego-expert-8b"),
+    "output_dir": str(Path(__file__).resolve().parent / "output" / "rego-expert-4b"),
     "max_seq_length": 2048,       # covers p99≈1853, p100≈1995 (includes schema in system prompt)
-    "batch_size": 4,              # per-device; good throughput default for 8B + QLoRA
-    "grad_accum": 4,              # effective batch size = 16
+    "batch_size": 8,              # per-device; faster default for 4B + QLoRA
+    "grad_accum": 2,              # effective batch size = 16
     "epochs": 3,                  # small dataset → multiple passes
     "lr": 2e-5,                   # standard SFT learning rate
     "lr_scheduler": "cosine",
@@ -60,13 +60,13 @@ DEFAULTS = {
     "lora_r": 16,
     "lora_alpha": 32,
     "lora_dropout": 0.05,
-    "use_4bit": True,             # QLoRA default keeps memory usage comfortable on 8B
+    "use_4bit": True,             # QLoRA default keeps memory usage comfortable on 4B
 }
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="SFT training for Rego expert (Qwen3-8B)",
+        description="SFT training for Rego expert (Qwen3-4B)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -221,6 +221,9 @@ def main() -> None:
         "attn_implementation": "sdpa",  # PyTorch native; use "flash_attention_2" if flash_attn is installed
     }
     if use_4bit:
+        # Prefer a single-GPU placement when CUDA is available. This avoids
+        # slow CPU offload behavior that can happen with device_map="auto".
+        device_map = {"": 0} if torch.cuda.is_available() else "auto"
         model_kwargs.update({
             "quantization_config": BitsAndBytesConfig(
                 load_in_4bit=True,
@@ -228,7 +231,7 @@ def main() -> None:
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True,
             ),
-            "device_map": "auto",
+            "device_map": device_map,
             "low_cpu_mem_usage": True,
         })
     else:
@@ -300,7 +303,7 @@ def main() -> None:
 
         # Misc
         seed=args.seed,
-        dataloader_pin_memory=True,
+        dataloader_pin_memory=torch.cuda.is_available(),
         dataloader_num_workers=4,
         gradient_checkpointing=not args.no_lora,  # save memory with LoRA
         gradient_checkpointing_kwargs={"use_reentrant": False} if not args.no_lora else None,
