@@ -122,8 +122,8 @@ DEFAULTS = {
     # batch_size must be >= num_generations because each "sample" in the
     # batch is one completion; a single prompt produces num_generations
     # samples that must all fit in the same batch.
-    "batch_size": 8,
-    "grad_accum": 1,
+    "batch_size": 4,
+    "grad_accum": 2,
     "lr": 5e-6,
     "warmup_ratio": 0.1,
     "seed": 42,
@@ -236,6 +236,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--completion-length-buffer", type=int, default=32,
                     help="Reserved headroom tokens subtracted from available completion "
                          "budget to avoid truncation and internal mask drift.")
+    p.add_argument("--keep-all-prompts", action="store_true",
+                    help="Disable p90 prompt filtering and keep all dataset prompts "
+                         "(may require lower batch/completion lengths).")
     p.add_argument("--max-prompt-length-override", type=int, default=0,
                     help="If > 0, force this max_prompt_length instead of auto-computed value.")
     p.add_argument("--max-completion-length-override", type=int, default=0,
@@ -249,6 +252,7 @@ def parse_args() -> argparse.Namespace:
 # ===========================================================================
 
 def main() -> None:
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     args = parse_args()
 
     # ------------------------------------------------------------------
@@ -336,6 +340,7 @@ def main() -> None:
     # already learned.
     # ------------------------------------------------------------------
     import torch
+    bf16_ok = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
 
     if args.no_unsloth:
         print(f"\nLoading model with standard HF (no Unsloth)...")
@@ -351,6 +356,8 @@ def main() -> None:
         sft_path = Path(args.sft_model)
         is_lora = (sft_path / "adapter_config.json").exists()
 
+        compute_dtype = torch.bfloat16 if bf16_ok else torch.float16
+
         if is_lora:
             # SFT output is a LoRA adapter — load base + SFT adapter, then
             # merge them into one set of weights.  This "bakes in" SFT
@@ -358,7 +365,7 @@ def main() -> None:
             print(f"  SFT model is a LoRA adapter — loading base model {args.base_model}...")
             base_model = AutoModelForCausalLM.from_pretrained(
                 args.base_model,
-                torch_dtype=torch.bfloat16,
+                torch_dtype=compute_dtype,
                 trust_remote_code=True,
             )
             print(f"  Applying SFT LoRA from {args.sft_model}...")
@@ -371,7 +378,7 @@ def main() -> None:
             print(f"  Loading merged SFT model from {args.sft_model}...")
             model = AutoModelForCausalLM.from_pretrained(
                 args.sft_model,
-                torch_dtype=torch.bfloat16,
+                torch_dtype=compute_dtype,
                 trust_remote_code=True,
             )
 
@@ -418,7 +425,7 @@ def main() -> None:
                 print(f"    Loading base model {args.base_model}...")
                 _base = AutoModelForCausalLM.from_pretrained(
                     args.base_model,
-                    torch_dtype=torch.bfloat16,
+                    torch_dtype=torch.bfloat16 if bf16_ok else torch.float16,
                     trust_remote_code=True,
                 )
                 print(f"    Applying SFT LoRA from {args.sft_model}...")
@@ -503,15 +510,17 @@ def main() -> None:
     tokenized = tokenized.map(lambda x: {"L": len(x["tokens"])})
     all_prompt_lengths = np.array(tokenized["L"])
     p90_prompt_length = int(np.quantile(all_prompt_lengths, 0.9))
+    max_prompt_seen = int(all_prompt_lengths.max()) if len(all_prompt_lengths) else 0
 
     # Enforce a hard prompt-length cap on the DATA itself.
     # Important: setting max_prompt_length in GRPOConfig alone does not
     # guarantee the dataset prompts are truncated before trainer internals.
-    effective_prompt_cap = (
-        args.max_prompt_length_override
-        if args.max_prompt_length_override > 0
-        else p90_prompt_length
-    )
+    if args.max_prompt_length_override > 0:
+        effective_prompt_cap = args.max_prompt_length_override
+    elif args.keep_all_prompts:
+        effective_prompt_cap = max_prompt_seen
+    else:
+        effective_prompt_cap = p90_prompt_length
     selected_indices = np.where(all_prompt_lengths <= effective_prompt_cap)[0]
     dataset = dataset.select(selected_indices)
     
@@ -563,6 +572,7 @@ def main() -> None:
         max_completion_length = safe_completion
         total_budget = max_prompt_length + max_completion_length
 
+    dropped = len(grpo_records) - len(dataset)
     print(f"  Auto prompt cap (p90):        {p90_prompt_length} tokens")
     print(f"  Effective prompt cap:         {effective_prompt_cap} tokens")
     print(f"  Actual max prompt length:     {actual_max_length} tokens")
@@ -578,6 +588,7 @@ def main() -> None:
               f"max={int(filtered_prompt_lengths.max())}")
 
     print(f"\n  Dataset after length filter: {len(dataset)} prompts")
+    print(f"  Dropped by length filter:    {dropped}")
     print(f"  Max prompt length (p90):     {p90_prompt_length} tokens")
     print(f"  Max completion length:       {max_completion_length} tokens")
 
@@ -707,7 +718,8 @@ def main() -> None:
         "warmup_ratio": args.warmup_ratio,
         "lr_scheduler_type": "linear",
         "optim": "adamw_8bit",
-        "bf16": True,
+        "bf16": bf16_ok,
+        "fp16": not bf16_ok,
 
         # ── Batching ──
         "per_device_train_batch_size": args.batch_size,
