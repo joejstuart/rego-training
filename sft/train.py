@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -46,8 +47,8 @@ DEFAULTS = {
     "dataset": str(Path(__file__).resolve().parent / "phase4_dataset" / "output" / "rego_sft.jsonl"),
     "output_dir": str(Path(__file__).resolve().parent / "output" / "rego-expert-4b"),
     "max_seq_length": 2048,       # covers p99≈1853, p100≈1995 (includes schema in system prompt)
-    "batch_size": 8,              # per-device; faster default for 4B + QLoRA
-    "grad_accum": 2,              # effective batch size = 16
+    "batch_size": 2,              # per-device; safe default for 4B + 2048 tokens on ~24GB GPUs
+    "grad_accum": 8,              # effective batch size = 16
     "epochs": 3,                  # small dataset → multiple passes
     "lr": 2e-5,                   # standard SFT learning rate
     "lr_scheduler": "cosine",
@@ -120,6 +121,11 @@ def parse_args() -> argparse.Namespace:
                     help="Resume training from a checkpoint directory.")
     p.add_argument("--dry-run", action="store_true",
                     help="Print config and dataset stats without training.")
+    p.add_argument("--fit-all-context", dest="fit_all_context", action="store_true",
+                    help="Auto-increase max sequence length to avoid truncating any example.")
+    p.add_argument("--no-fit-all-context", dest="fit_all_context", action="store_false",
+                    help="Keep --max-seq-length fixed even if examples are longer.")
+    p.set_defaults(fit_all_context=True)
 
     return p.parse_args()
 
@@ -140,6 +146,23 @@ def load_dataset(path: str, eval_split: float, seed: int) -> tuple[Dataset, Data
         return split["train"], split["test"]
 
     return ds, None
+
+
+def _max_tokens_in_dataset(ds: Dataset | None, tokenizer: AutoTokenizer) -> int:
+    """Return the maximum tokenized chat length in a dataset split."""
+    if ds is None or len(ds) == 0:
+        return 0
+
+    max_tokens = 0
+    for ex in ds:
+        messages = ex.get("messages")
+        if not messages:
+            continue
+        text = tokenizer.apply_chat_template(messages, tokenize=False)
+        n_tokens = len(tokenizer.encode(text, add_special_tokens=False))
+        if n_tokens > max_tokens:
+            max_tokens = n_tokens
+    return max_tokens
 
 
 def print_config(args: argparse.Namespace, train_ds: Dataset, eval_ds: Dataset | None) -> None:
@@ -175,6 +198,9 @@ def print_config(args: argparse.Namespace, train_ds: Dataset, eval_ds: Dataset |
 
 
 def main() -> None:
+    # Helps reduce CUDA memory fragmentation on long-running training jobs.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     args = parse_args()
     use_4bit = (not args.no_lora) and (not args.no_4bit)
     bf16_ok = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -221,9 +247,6 @@ def main() -> None:
         "attn_implementation": "sdpa",  # PyTorch native; use "flash_attention_2" if flash_attn is installed
     }
     if use_4bit:
-        # Prefer a single-GPU placement when CUDA is available. This avoids
-        # slow CPU offload behavior that can happen with device_map="auto".
-        device_map = {"": 0} if torch.cuda.is_available() else "auto"
         model_kwargs.update({
             "quantization_config": BitsAndBytesConfig(
                 load_in_4bit=True,
@@ -231,13 +254,47 @@ def main() -> None:
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True,
             ),
-            "device_map": device_map,
-            "low_cpu_mem_usage": True,
         })
+        if not torch.cuda.is_available():
+            model_kwargs["device_map"] = "auto"
+            model_kwargs["low_cpu_mem_usage"] = True
     else:
         model_kwargs["torch_dtype"] = compute_dtype
 
     model = AutoModelForCausalLM.from_pretrained(args.model, **model_kwargs)
+
+    runtime_max_seq_length = args.max_seq_length
+    if args.fit_all_context:
+        print("Scanning token lengths to fit all context...")
+        train_max = _max_tokens_in_dataset(train_ds, tokenizer)
+        eval_max = _max_tokens_in_dataset(eval_ds, tokenizer)
+        observed_max = max(train_max, eval_max)
+        model_ctx = int(getattr(model.config, "max_position_embeddings", observed_max))
+
+        if observed_max > runtime_max_seq_length:
+            if observed_max > model_ctx:
+                print(
+                    f"  WARNING: observed max length ({observed_max}) exceeds model context ({model_ctx}); "
+                    "clipping to model limit."
+                )
+            runtime_max_seq_length = min(observed_max, model_ctx)
+            tokenizer.model_max_length = runtime_max_seq_length
+            print(f"  Increased max sequence length to {runtime_max_seq_length} to avoid truncation.")
+
+            # Longer context increases activation memory. Keep the run stable by
+            # reducing micro-batch and preserving effective batch via grad_accum.
+            if args.batch_size > 1:
+                old_batch = args.batch_size
+                old_accum = args.grad_accum
+                args.batch_size = 1
+                args.grad_accum = old_accum * old_batch
+                print(
+                    f"  Auto-adjusted batch for memory: {old_batch} x {old_accum} -> "
+                    f"{args.batch_size} x {args.grad_accum} (effective batch preserved)."
+                )
+    args.max_seq_length = runtime_max_seq_length
+    if args.fit_all_context:
+        print(f"  Runtime max seq length: {args.max_seq_length}")
 
     # ------------------------------------------------------------------
     # LoRA config (optional)
