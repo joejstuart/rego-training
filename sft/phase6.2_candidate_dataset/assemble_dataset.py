@@ -101,24 +101,49 @@ def _helper_variant_prompts(
     out_type: str,
     rule_code: str,
     test_code: str,
+    task_id: str = "",
 ) -> list[tuple[str, str]]:
     """Build prompt variants for helper-method tasks."""
-    funcs = _extract_func_descriptions(rule_code)
+    funcs = _extract_func_descriptions(rule_code, task_id=task_id)
     canonical_desc = _build_helper_description(pkg, funcs)
-    names_only = ", ".join(f"`{f['name']}`" for f in funcs[:8])
-    terse_desc = (
-        f"Create helper functions in package `{pkg}`: {names_only}. No deny rules."
-        if funcs else canonical_desc
-    )
+
+    # Terse: function names with short descriptions
+    if funcs:
+        terse_items = []
+        for f in funcs[:8]:
+            if f["doc"]:
+                terse_items.append(f"`{f['name']}` ({f['doc'][:80]})")
+            else:
+                terse_items.append(f"`{f['name']}`")
+        terse_desc = (
+            f"Create helper functions in package `{pkg}`. No deny rules. "
+            f"Functions: {'; '.join(terse_items)}."
+        )
+    else:
+        terse_desc = canonical_desc
+
+    # Behavior: bulleted descriptions of each function
+    if funcs:
+        behavior_items = []
+        for f in funcs[:8]:
+            if f["doc"]:
+                behavior_items.append(f"- `{f['name']}`: {f['doc']}")
+            else:
+                behavior_items.append(f"- `{f['name']}`")
+        func_block = "\n".join(behavior_items)
+        behavior_desc = (
+            f"Implement reusable Rego helpers for package `{pkg}`. "
+            f"Do NOT write deny rules. Each function should have deterministic "
+            f"return behavior:\n{func_block}"
+        )
+    else:
+        behavior_desc = canonical_desc
 
     if out_type == "rule_only":
         return [
             ("phase6_helper_canonical", canonical_desc),
             ("phase6_helper_terse", terse_desc),
-            ("phase6_helper_reuse", (
-                f"Create reusable helper logic in package `{pkg}` with "
-                f"deterministic return behavior. Do not produce deny policy output."
-            )),
+            ("phase6_helper_behavior", behavior_desc),
         ]
     if out_type == "test_only":
         return [
@@ -188,7 +213,14 @@ def _think_for(
         )
     else:
         if funcs:
-            func_list = ", ".join(f"`{f['name']}`" for f in funcs[:5])
+            # Include behavioral descriptions in think trace when available
+            func_parts = []
+            for f in funcs[:5]:
+                if f["doc"]:
+                    func_parts.append(f"`{f['name']}` ({f['doc'][:60]})")
+                else:
+                    func_parts.append(f"`{f['name']}`")
+            func_list = ", ".join(func_parts)
             base = (
                 f"I need to implement helper functions for package `{pkg}`: "
                 f"{func_list}. Each should have deterministic return behavior. "
@@ -255,7 +287,7 @@ def assemble() -> list[dict]:
 
         # Pre-extract function descriptions for helpers
         funcs = (
-            _extract_func_descriptions(rule_code)
+            _extract_func_descriptions(rule_code, task_id=task_id)
             if task_type == "helper_method"
             else None
         )
@@ -268,6 +300,7 @@ def assemble() -> list[dict]:
             if task_type == "helper_method":
                 prompt_variants = _helper_variant_prompts(
                     pkg, out_type, rule_code, test_code,
+                    task_id=task_id,
                 )
             else:
                 prompt_variants = [

@@ -690,11 +690,179 @@ def _load_phase61_tasks() -> list[dict]:
     return records
 
 
-def _extract_func_descriptions(code: str) -> list[dict]:
+# ---------------------------------------------------------------------------
+# Hand-curated behavioral descriptions for undocumented exported functions.
+# Keyed by (task_id, func_base_name) → one-line description.
+# Used as fallback when the source code has no doc comment above the function.
+# ---------------------------------------------------------------------------
+_FUNC_DOC_OVERRIDES: dict[tuple[str, str], str] = {
+    # ── lib.assertions ─────────────────────────────────────────────────────
+    ("policy__lib__assertions", "assert_not_equal"):
+        "returns true when left_value and right_value are not equal",
+    ("policy__lib__assertions", "assert_empty"):
+        "returns true when the given collection (array/set/object) is empty",
+    ("policy__lib__assertions", "assert_not_empty"):
+        "returns true when the given collection is non-empty",
+    # ── lib.metadata_helper ────────────────────────────────────────────────
+    ("policy__lib__metadata_helper", "pipeline_intention_match"):
+        "returns true if the configured pipeline_intention matches the rule "
+        "annotation custom.pipeline_intention; false otherwise",
+    ("policy__lib__metadata_helper", "result_helper"):
+        "builds a structured result object from rule annotations with a "
+        "formatted failure message, optionally including collections metadata",
+    ("policy__lib__metadata_helper", "result_helper_with_term"):
+        "extends result_helper by adding a 'term' field to the result object",
+    ("policy__lib__metadata_helper", "result_helper_with_severity"):
+        "extends result_helper by adding a 'severity' field to the result object",
+    # ── lib.sbom.rpm ───────────────────────────────────────────────────────
+    ("policy__lib__sbom__rpm", "all_rpm_entities"):
+        "collects all RPM package entities across every SBOM (CycloneDX and SPDX)",
+    ("policy__lib__sbom__rpm", "rpms_from_sbom"):
+        "extracts RPM-type package entities from a single SBOM, returning "
+        "objects with 'purl' and 'found_by_cachi2' fields",
+    # ── lib.sbom.sbom ──────────────────────────────────────────────────────
+    ("policy__lib__sbom__sbom", "all_sboms"):
+        "returns the combined array of all CycloneDX and SPDX SBOMs",
+    ("policy__lib__sbom__sbom", "cyclonedx_sboms"):
+        "returns all CycloneDX-format SBOMs from attestation and OCI sources",
+    ("policy__lib__sbom__sbom", "spdx_sboms"):
+        "returns all SPDX-format SBOMs from attestation and OCI sources",
+    ("policy__lib__sbom__sbom", "has_item"):
+        "returns true if the needle purl matches any item in the haystack by "
+        "comparing parsed purl components (type, namespace, name, version)",
+    ("policy__lib__sbom__sbom", "image_ref_from_purl"):
+        "extracts an OCI image reference (registry/repo@sha256:digest) from "
+        "an OCI-type purl string",
+    ("policy__lib__sbom__sbom", "rule_data_packages_key"):
+        "returns the rule-data key string 'disallowed_packages'",
+    ("policy__lib__sbom__sbom", "rule_data_attributes_key"):
+        "returns the rule-data key string 'disallowed_attributes'",
+    ("policy__lib__sbom__sbom", "rule_data_allowed_external_references_key"):
+        "returns the rule-data key string 'allowed_external_references'",
+    ("policy__lib__sbom__sbom", "rule_data_disallowed_external_references_key"):
+        "returns the rule-data key string 'disallowed_external_references'",
+    ("policy__lib__sbom__sbom", "rule_data_allowed_package_sources_key"):
+        "returns the rule-data key string 'allowed_package_sources'",
+    # ── lib.set_helpers ────────────────────────────────────────────────────
+    ("policy__lib__set_helpers", "to_array"):
+        "converts a Rego set to an array by iterating over all members",
+    # ── lib.sigstore ───────────────────────────────────────────────────────
+    ("policy__lib__sigstore", "sigstore_opts"):
+        "returns the default sigstore verification options from data.config",
+    # ── lib.string_utils ───────────────────────────────────────────────────
+    ("policy__lib__string_utils", "quoted_values_string"):
+        "returns a comma-separated string of single-quoted values from the list",
+    ("policy__lib__string_utils", "pluralize_maybe"):
+        "returns the singular word if the collection has exactly one item, "
+        "otherwise returns the plural word (or appends 's' if no plural given)",
+    # ── lib.tekton.pipeline ────────────────────────────────────────────────
+    ("policy__lib__tekton__pipeline", "pipeline_label"):
+        "returns the label key 'pipelines.openshift.io/runtime'",
+    ("policy__lib__tekton__pipeline", "task_label"):
+        "returns the label key 'build.appstudio.redhat.com/build_type'",
+    ("policy__lib__tekton__pipeline", "latest_required_pipeline_tasks"):
+        "returns the newest time-versioned set of required tasks for the pipeline",
+    ("policy__lib__tekton__pipeline", "current_required_pipeline_tasks"):
+        "returns the currently-effective time-versioned set of required tasks",
+    ("policy__lib__tekton__pipeline", "pipeline_name"):
+        "returns the pipeline name from input.metadata.name",
+    # ── lib.tekton.refs ────────────────────────────────────────────────────
+    ("policy__lib__tekton__refs", "task_ref"):
+        "resolves a task reference with bundle, name, kind, and pinned/tagged "
+        "ref details from old-style bundles, bundle-resolver, or git-resolver",
+    # ── lib.tekton.task ────────────────────────────────────────────────────
+    ("policy__lib__tekton__task", "slsa_provenance_predicate_type_v1"):
+        "returns the SLSA v1 predicate type URI 'https://slsa.dev/provenance/v1'",
+    ("policy__lib__tekton__task", "slsa_provenance_predicate_type_v02"):
+        "returns the SLSA v0.2 predicate type URI 'https://slsa.dev/provenance/v0.2'",
+    ("policy__lib__tekton__task", "missing_required_tasks_data"):
+        "returns true when no required-tasks data is configured (count == 0)",
+    ("policy__lib__tekton__task", "task_results"):
+        "returns the .results array from the given task object",
+    ("policy__lib__tekton__task", "task_result_endswith"):
+        "returns result values from a task whose result names end with the suffix, sorted by name",
+    ("policy__lib__tekton__task", "pre_build_tasks"):
+        "filters tasks from an attestation to return only those matching known pre-build task names",
+    ("policy__lib__tekton__task", "git_clone_tasks"):
+        "filters tasks from an attestation to return only git-clone tasks",
+    ("policy__lib__tekton__task", "source_build_tasks"):
+        "filters tasks from an attestation to return only source-build tasks",
+    # ── lib.tekton.task_results ────────────────────────────────────────────
+    ("policy__lib__tekton__task_results", "task_result_artifact_url"):
+        "collects all artifact URLs from a task by combining IMAGE_URL, "
+        "ARTIFACT_URI, IMAGES_URL, and ARTIFACT_OUTPUTS_URL results",
+    ("policy__lib__tekton__task_results", "task_result_artifact_digest"):
+        "collects all artifact digests from a task by combining IMAGE_DIGEST, "
+        "ARTIFACT_DIGEST, IMAGES_DIGEST, and ARTIFACT_OUTPUTS_DIGEST results",
+    ("policy__lib__tekton__task_results", "images_with_digests"):
+        "pairs each artifact URL with its corresponding digest by index, "
+        "returning strings in 'image@digest' format",
+    # ── lib.tekton.trusted ─────────────────────────────────────────────────
+    ("policy__lib__tekton__trusted", "data_errors"):
+        "validates the trusted-tasks rule data against a JSON schema and "
+        "returns any schema validation errors",
+    # ── custom helpers ─────────────────────────────────────────────────────
+    ("sft__policy_release_candidates__helper_methods__is_pipelinerun_attestation_helper",
+     "is_pipelinerun_attestation"):
+        "returns true if the attestation is a Tekton pipelineRun, supporting "
+        "both SLSA v0.2 (tekton.dev PipelineRun buildTypes) and SLSA v1 "
+        "(tekton.dev/chains build types)",
+    ("sft__policy_release_candidates__helper_methods__maybe_tasks_helper",
+     "maybe_tasks"):
+        "extracts the tasks array from an attestation, using "
+        "predicate.buildConfig.tasks for SLSA v0.2 and decoding "
+        "resolvedDependencies pipelineTask entries for SLSA v1",
+    ("sft__policy_release_candidates__helper_methods__normalize_git_url_helper",
+     "normalize_git_url"):
+        "normalises a git URL by adding a 'git+' prefix (if missing) and a "
+        "'.git' suffix (if missing)",
+    ("sft__policy_release_candidates__helper_methods__normalize_git_url_helper",
+     "prefix_git_url"):
+        "prepends 'git+' to a URL if it doesn't already have that prefix",
+    ("sft__policy_release_candidates__helper_methods__normalize_git_url_helper",
+     "suffix_git_url"):
+        "appends '.git' to a URL if it doesn't already have that suffix",
+    ("sft__policy_release_candidates__helper_methods__slsa_task_helper",
+     "slsa_task"):
+        "returns the task object (merging status.results into the top level "
+        "if present) when the task ref kind is 'task'",
+    ("sft__policy_release_candidates__helper_methods__slsa_task_helper",
+     "task_ref"):
+        "resolves the task reference from task.ref, task.taskRef, or "
+        "task.spec.taskRef (tried in order)",
+    ("sft__policy_release_candidates__helper_methods__task_names_helper",
+     "task_name"):
+        "returns the task name by reading task_ref(task).name",
+    ("sft__policy_release_candidates__helper_methods__task_names_helper",
+     "task_names"):
+        "returns a set containing the base task name plus parameterised "
+        "variants in 'name[key=value]' format",
+    ("sft__policy_release_candidates__helper_methods__task_names_helper",
+     "task_params"):
+        "extracts task parameters from task.invocation.parameters (if no "
+        "task.params) or converts task.params array to a {name: value} map",
+    ("sft__policy_release_candidates__helper_methods__task_names_helper",
+     "task_ref"):
+        "resolves the task reference from task.ref, task.taskRef, or "
+        "task.spec.taskRef (tried in order)",
+    ("sft__policy_release_candidates__helper_methods__task_param_helper",
+     "task_params"):
+        "extracts task parameters from task.invocation.parameters (if no "
+        "task.params) or converts task.params array to a {name: value} map",
+    ("sft__policy_release_candidates__helper_methods__task_param_helper",
+     "task_param"):
+        "returns the value of a single named parameter from the task",
+}
+
+
+def _extract_func_descriptions(code: str, task_id: str = "") -> list[dict]:
     """Extract exported function/rule names with their doc-comments from Rego code.
 
     Returns a list of dicts: {"name": "func(args)", "doc": "one-line description"}
     Only returns *exported* (non-underscore) symbols.
+
+    When *task_id* is provided, undocumented functions are looked up in
+    ``_FUNC_DOC_OVERRIDES`` so every function gets a behavioral description.
     """
     lines = code.split("\n")
     results: list[dict] = []
@@ -717,6 +885,9 @@ def _extract_func_descriptions(code: str) -> list[dict]:
             comments.insert(0, lines[j].lstrip("# ").strip())
             j -= 1
         doc = " ".join(comments).strip()[:150] if comments else ""
+        # Fall back to curated override if no doc-comment found
+        if not doc and task_id:
+            doc = _FUNC_DOC_OVERRIDES.get((task_id, name), "")
         results.append({"name": sig, "doc": doc})
     return results
 
@@ -763,24 +934,44 @@ def _build_deny_description(pkg: str, code: str) -> str:
 def _phase6_prompt_variants(task: dict) -> list[tuple[str, str]]:
     pkg = task["package_name"]
     rule_code = task.get("rule_code", "")
+    task_id = task.get("task_id", "")
 
     if task["task_type"] == "helper_method":
-        funcs = _extract_func_descriptions(rule_code)
+        funcs = _extract_func_descriptions(rule_code, task_id=task_id)
         canonical = _build_helper_description(pkg, funcs)
-        # Shorter variant using just function names
-        names_only = ", ".join(f"`{f['name']}`" for f in funcs[:8])
-        terse = (
-            f"Create helper functions in package `{pkg}`: {names_only}. "
-            f"No deny rules."
-        ) if funcs else canonical
-        # Behavior-focused variant
-        behavior = (
-            f"Implement reusable Rego helper code for package `{pkg}`. "
-            f"Each exported function should have deterministic return behavior. "
-            f"Do not produce deny rule output."
-        )
+
+        # Terse: function names *with* short descriptions (one line each)
         if funcs:
-            behavior += f" Required exports: {names_only}."
+            terse_items = []
+            for f in funcs[:8]:
+                if f["doc"]:
+                    terse_items.append(f"`{f['name']}` ({f['doc'][:80]})")
+                else:
+                    terse_items.append(f"`{f['name']}`")
+            terse = (
+                f"Create helper functions in package `{pkg}`. No deny rules. "
+                f"Functions: {'; '.join(terse_items)}."
+            )
+        else:
+            terse = canonical
+
+        # Behavior: focus on what each function returns/does
+        if funcs:
+            behavior_items = []
+            for f in funcs[:8]:
+                if f["doc"]:
+                    behavior_items.append(f"- `{f['name']}`: {f['doc']}")
+                else:
+                    behavior_items.append(f"- `{f['name']}`")
+            func_block = "\n".join(behavior_items)
+            behavior = (
+                f"Implement reusable Rego helpers for package `{pkg}`. "
+                f"Do NOT write deny rules. Each function should have deterministic "
+                f"return behavior:\n{func_block}"
+            )
+        else:
+            behavior = canonical
+
         return [
             ("phase6_helper_canonical", canonical),
             ("phase6_helper_terse", terse),
