@@ -151,14 +151,24 @@ def load_model(args: argparse.Namespace):
         trust_remote_code=True,
     )
 
+    # Determine device placement and dtype
+    if torch.cuda.is_available():
+        device_map = {"": 0}  # force single-GPU, avoid CPU offload
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        print(f"  CUDA available — using GPU 0 ({dtype})")
+    else:
+        device_map = "cpu"
+        dtype = torch.float32
+        print("  WARNING: CUDA not available — running on CPU (slow!)")
+
     if is_lora:
         print(f"Detected LoRA adapter at {args.model}")
         print(f"Loading base model {args.base_model}...")
         from peft import PeftModel
         model = AutoModelForCausalLM.from_pretrained(
             args.base_model,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
+            torch_dtype=dtype,
+            device_map=device_map,
             trust_remote_code=True,
         )
 
@@ -181,8 +191,8 @@ def load_model(args: argparse.Namespace):
         print(f"Loading model from {args.model}...")
         model = AutoModelForCausalLM.from_pretrained(
             args.model,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
+            torch_dtype=dtype,
+            device_map=device_map,
             trust_remote_code=True,
         )
 

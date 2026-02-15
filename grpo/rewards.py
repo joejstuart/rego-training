@@ -131,6 +131,12 @@ def _extract_rego_code(text: str) -> Optional[str]:
     return text.strip() if text.strip() else None
 
 
+def _extract_package_name(code: str) -> Optional[str]:
+    """Extract package name from Rego code."""
+    m = re.search(r"^package\s+([A-Za-z_]\w*)\s*$", code, re.MULTILINE)
+    return m.group(1) if m else None
+
+
 # ===========================================================================
 # 1. reward_format  (max +5.0 / min -7.0)
 # ===========================================================================
@@ -168,13 +174,15 @@ def reward_format(completions, task_type=None, **kwargs) -> list[float]:
         score += 0.5 if "<think>" in response or response.startswith("") else -0.5
         score += 0.5 if "</think>" in response else -0.5
 
+        is_deny_like = "deny contains msg if" in code
+
         # Critical structural elements — check CODE only (prevents think-tag gaming)
         score += 1.0 if re.search(r"^package\s+\w+", code, re.M) else -2.0
         score += 0.5 if "import rego.v1" in code else -1.0
         if tt == "helper_method":
             # Helper tasks shouldn't be forced into deny-pattern outputs.
             helper_like = (
-                "deny contains msg if" not in code
+                not is_deny_like
                 and (
                     bool(re.search(r"\b[a-zA-Z_]\w*\s*\(", code))
                     or bool(re.search(r"\b[a-zA-Z_]\w*\s*:=", code))
@@ -182,8 +190,11 @@ def reward_format(completions, task_type=None, **kwargs) -> list[float]:
                 )
             )
             score += 2.0 if helper_like else -3.0
+            # Hard penalty for off-task deny outputs on helper prompts.
+            if is_deny_like:
+                score -= 6.0
         else:
-            score += 2.0 if "deny contains msg if" in code else -3.0
+            score += 2.0 if is_deny_like else -3.0
 
         # Nice-to-have — check CODE only
         if tt == "helper_method":
@@ -251,7 +262,7 @@ def reward_opa_parse(completions, **kwargs) -> list[float]:
 # rule, so if the model's rule passes the same tests, it's equivalent.
 # ===========================================================================
 
-def reward_opa_test(completions, test_code, package_name, **kwargs) -> list[float]:
+def reward_opa_test(completions, test_code, package_name, task_type=None, **kwargs) -> list[float]:
     """Reward functional correctness via ``opa test``.
 
     Writes the generated rule + ground-truth test to a temp directory,
@@ -265,21 +276,24 @@ def reward_opa_test(completions, test_code, package_name, **kwargs) -> list[floa
     ======  ======================
     """
     scores = []
-    for completion, tc, pkg in zip(completions, test_code, package_name):
+    for i, (completion, tc, pkg) in enumerate(zip(completions, test_code, package_name)):
         response = completion[0]["content"]
         code = _extract_rego_code(response)
         if code is None:
             scores.append(-4.0)
             continue
+        tt = task_type[i] if isinstance(task_type, list) and i < len(task_type) else "deny_rule"
 
-        # Fix package name if the model used a different one
-        code_fixed = re.sub(
-            r"^package\s+\w+",
-            f"package {pkg}",
-            code,
-            count=1,
-            flags=re.MULTILINE,
-        )
+        # Enforce task-type intent: helper tasks should not output deny rules.
+        if tt == "helper_method" and "deny contains msg if" in code:
+            scores.append(-4.0)
+            continue
+
+        # Enforce package alignment to prevent reward gaming with unrelated code.
+        declared_pkg = _extract_package_name(code)
+        if declared_pkg is not None and declared_pkg != pkg:
+            scores.append(-4.0)
+            continue
 
         try:
             with tempfile.TemporaryDirectory() as td:
@@ -287,7 +301,7 @@ def reward_opa_test(completions, test_code, package_name, **kwargs) -> list[floa
                 test_path = os.path.join(td, f"{pkg}_test.rego")
 
                 with open(rule_path, "w") as f:
-                    f.write(code_fixed)
+                    f.write(code)
                 with open(test_path, "w") as f:
                     f.write(tc)
 

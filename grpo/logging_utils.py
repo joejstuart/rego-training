@@ -161,84 +161,95 @@ class StepLogger:
         rewards_by_func = self._buffer.get("rewards", {})
 
         n = len(completions_raw)
+        prompt_count = len(prompts) if isinstance(prompts, list) and len(prompts) > 0 else 1
+        if prompt_count <= 0:
+            prompt_count = 1
 
-        # --- Per-completion detail ---
-        completions_log = []
-        totals: list[float] = []
+        # TRL may pass a flat completion list for multiple prompts in the same
+        # step. Split into prompt-groups so each logged record maps to one prompt.
+        group_size = n // prompt_count if n % prompt_count == 0 else n
 
-        for i in range(n):
-            response = _get_response_text(completions_raw[i])
-            think, code = _extract_think_and_code(response)
+        records: list[dict] = []
+        for pidx in range(prompt_count):
+            start = pidx * group_size
+            end = min(start + group_size, n)
+            if start >= n:
+                break
 
-            per_func: dict[str, float] = {}
-            total = 0.0
-            for fname, scores in rewards_by_func.items():
-                s = scores[i] if i < len(scores) else 0.0
-                per_func[fname] = round(s, 2)
-                total += s
+            completions_log = []
+            totals: list[float] = []
 
-            totals.append(round(total, 2))
-            completions_log.append({
-                "code": code[:600],
-                "think": think[:400] if think else "",
-                "rewards": per_func,
-                "total_reward": round(total, 2),
-            })
+            for i in range(start, end):
+                response = _get_response_text(completions_raw[i])
+                think, code = _extract_think_and_code(response)
 
-        # --- Aggregate stats ---
-        best_idx = totals.index(max(totals)) if totals else 0
-        worst_idx = totals.index(min(totals)) if totals else 0
-        reward_mean = sum(totals) / len(totals) if totals else 0.0
-        reward_std = (
-            (sum((t - reward_mean) ** 2 for t in totals) / len(totals)) ** 0.5
-            if len(totals) > 1 else 0.0
-        )
-        has_signal = reward_std > 0.01  # tiny float tolerance
+                per_func: dict[str, float] = {}
+                total = 0.0
+                for fname, scores in rewards_by_func.items():
+                    s = scores[i] if i < len(scores) else 0.0
+                    per_func[fname] = round(s, 2)
+                    total += s
 
-        # --- Identify prompt ---
-        prompt_text = _extract_prompt_text(prompts, 0) if prompts else ""
-        task_id = (
-            task_ids[0] if isinstance(task_ids, list) and task_ids
-            else str(task_ids) if task_ids else ""
-        )
-        variant = (
-            variants[0] if isinstance(variants, list) and variants
-            else str(variants) if variants else ""
-        )
+                totals.append(round(total, 2))
+                completions_log.append({
+                    "code": code[:600],
+                    "think": think[:400] if think else "",
+                    "rewards": per_func,
+                    "total_reward": round(total, 2),
+                })
 
-        # --- Build log record ---
-        record = {
-            "step": step,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "task_id": task_id,
-            "variant": variant,
-            "prompt": prompt_text[:300],
-            "num_completions": n,
-            "completions": completions_log,
-            "best_idx": best_idx,
-            "worst_idx": worst_idx,
-            "reward_mean": round(reward_mean, 2),
-            "reward_std": round(reward_std, 2),
-            "had_learning_signal": has_signal,
-        }
-        if metrics:
-            record["metrics"] = {
-                k: round(v, 6) if isinstance(v, float) else v
-                for k, v in metrics.items()
-                if k in (
-                    "loss", "grad_norm", "learning_rate", "reward",
-                    "reward_std", "kl", "entropy",
-                )
+            best_idx = totals.index(max(totals)) if totals else 0
+            worst_idx = totals.index(min(totals)) if totals else 0
+            reward_mean = sum(totals) / len(totals) if totals else 0.0
+            reward_std = (
+                (sum((t - reward_mean) ** 2 for t in totals) / len(totals)) ** 0.5
+                if len(totals) > 1 else 0.0
+            )
+            has_signal = reward_std > 0.01  # tiny float tolerance
+
+            prompt_text = _extract_prompt_text(prompts, pidx) if prompts else ""
+            task_id = (
+                task_ids[pidx] if isinstance(task_ids, list) and pidx < len(task_ids)
+                else str(task_ids) if task_ids else ""
+            )
+            variant = (
+                variants[pidx] if isinstance(variants, list) and pidx < len(variants)
+                else str(variants) if variants else ""
+            )
+
+            record = {
+                "step": step,
+                "prompt_index": pidx,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "task_id": task_id,
+                "variant": variant,
+                "prompt": prompt_text[:300],
+                "num_completions": len(completions_log),
+                "completions": completions_log,
+                "best_idx": best_idx,
+                "worst_idx": worst_idx,
+                "reward_mean": round(reward_mean, 2),
+                "reward_std": round(reward_std, 2),
+                "had_learning_signal": has_signal,
             }
+            if metrics:
+                record["metrics"] = {
+                    k: round(v, 6) if isinstance(v, float) else v
+                    for k, v in metrics.items()
+                    if k in (
+                        "loss", "grad_norm", "learning_rate", "reward",
+                        "reward_std", "kl", "entropy",
+                    )
+                }
+            records.append(record)
 
-        # --- Write JSONL ---
         with open(self.log_file, "a") as f:
-            f.write(json.dumps(record, default=str) + "\n")
+            for record in records:
+                f.write(json.dumps(record, default=str) + "\n")
 
-        # --- Console summary ---
         self._steps_logged += 1
-        if (self._steps_logged % self.console_every == 0) or step <= 3:
-            self._print_step_summary(step, record)
+        if records and ((self._steps_logged % self.console_every == 0) or step <= 3):
+            self._print_step_summary(step, records[0])
 
         # Clear buffer for next step
         self._buffer = {}
