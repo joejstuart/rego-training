@@ -122,8 +122,10 @@ DEFAULTS = {
     # batch_size must be >= num_generations because each "sample" in the
     # batch is one completion; a single prompt produces num_generations
     # samples that must all fit in the same batch.
+    # batch_size=4 with gradient_checkpointing=True fits ~900-token
+    # completions on 22GB GPUs.  grad_accum=1 minimises peak VRAM.
     "batch_size": 4,
-    "grad_accum": 2,
+    "grad_accum": 1,
     "lr": 5e-6,
     "warmup_ratio": 0.1,
     "seed": 42,
@@ -686,6 +688,14 @@ def main() -> None:
     # The result: tokens that appear in high-reward completions become more
     # likely; tokens in low-reward completions become less likely.
     # ------------------------------------------------------------------
+    # Guard: max_completion_length must be enough to produce useful output.
+    # A Rego rule with <think> trace needs ~300-500 tokens minimum.
+    if max_completion_length < 384:
+        print(f"  WARNING: max_completion_length={max_completion_length} is too small "
+              f"for useful Rego output (need ≥384).")
+        print(f"           Raising to 384. Use --max-seq-length to increase budget.")
+        max_completion_length = 384
+
     grpo_config_kwargs = {
         "output_dir": args.output_dir,
 
@@ -721,6 +731,12 @@ def main() -> None:
         "bf16": bf16_ok,
         "fp16": not bf16_ok,
 
+        # ── Memory ──
+        # Gradient checkpointing trades compute for memory — critical for
+        # fitting longer completions on 22GB GPUs.
+        "gradient_checkpointing": True,
+        "gradient_checkpointing_kwargs": {"use_reentrant": False},
+
         # ── Batching ──
         "per_device_train_batch_size": args.batch_size,
         "gradient_accumulation_steps": args.grad_accum,
@@ -747,6 +763,16 @@ def main() -> None:
         print(f"  WARNING: could not inspect GRPOConfig signature: {e}")
 
     training_args = GRPOConfig(**grpo_config_kwargs)
+
+    # Verify TRL actually applied our max_completion_length (sanity check).
+    actual_mcl = getattr(training_args, "max_completion_length", None)
+    if actual_mcl != max_completion_length:
+        print(f"\n  *** WARNING: GRPOConfig.max_completion_length={actual_mcl} "
+              f"but we requested {max_completion_length}! ***")
+        print(f"      TRL {_safe_pkg_version('trl')} may use a different param name.")
+        print(f"      Training will likely produce truncated, useless completions.\n")
+    else:
+        print(f"  GRPOConfig.max_completion_length verified: {actual_mcl} tokens")
 
     # ------------------------------------------------------------------
     # Train
