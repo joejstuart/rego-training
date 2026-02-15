@@ -254,7 +254,8 @@ def parse_args() -> argparse.Namespace:
 # ===========================================================================
 
 def main() -> None:
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    # Mitigate CUDA memory fragmentation (renamed in PyTorch ≥2.9).
+    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
     args = parse_args()
 
     # ------------------------------------------------------------------
