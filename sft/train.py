@@ -199,7 +199,8 @@ def print_config(args: argparse.Namespace, train_ds: Dataset, eval_ds: Dataset |
 
 def main() -> None:
     # Helps reduce CUDA memory fragmentation on long-running training jobs.
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    # Mitigate CUDA memory fragmentation (renamed in PyTorch ≥2.9).
+    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 
     args = parse_args()
     use_4bit = (not args.no_lora) and (not args.no_4bit)

@@ -361,6 +361,15 @@ def main() -> None:
 
         compute_dtype = torch.bfloat16 if bf16_ok else torch.float16
 
+        # Force single-GPU placement when available; avoids CPU offload and
+        # ensures generation + backward pass both run on GPU.
+        if torch.cuda.is_available():
+            device_map = {"": 0}
+            print(f"  CUDA available — forcing single-GPU placement (dtype={compute_dtype})")
+        else:
+            device_map = "cpu"
+            print(f"  WARNING: CUDA not available — model will be on CPU (very slow!)")
+
         if is_lora:
             # SFT output is a LoRA adapter — load base + SFT adapter, then
             # merge them into one set of weights.  This "bakes in" SFT
@@ -369,6 +378,7 @@ def main() -> None:
             base_model = AutoModelForCausalLM.from_pretrained(
                 args.base_model,
                 torch_dtype=compute_dtype,
+                device_map=device_map,
                 trust_remote_code=True,
             )
             print(f"  Applying SFT LoRA from {args.sft_model}...")
@@ -382,8 +392,12 @@ def main() -> None:
             model = AutoModelForCausalLM.from_pretrained(
                 args.sft_model,
                 torch_dtype=compute_dtype,
+                device_map=device_map,
                 trust_remote_code=True,
             )
+
+        print(f"  Model device: {model.device}")
+        print(f"  Model dtype:  {model.dtype}")
 
         # A NEW LoRA adapter for GRPO training.  These are the ONLY weights
         # that the optimizer will update.  The merged SFT weights underneath
@@ -747,6 +761,9 @@ def main() -> None:
         "save_steps": save_every,                 # intermediate checkpoints
         "logging_steps": 1,
         "report_to": "none",
+
+        # DataLoader — only pin memory when CUDA is available
+        "dataloader_pin_memory": torch.cuda.is_available(),
 
         # Misc
         "seed": args.seed,
