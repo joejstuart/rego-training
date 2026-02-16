@@ -2,13 +2,19 @@
 """SFT training script for Qwen3-4B-Thinking on SLSA provenance attestation Rego rules.
 
 Trains using LoRA (default) or full fine-tuning on the dataset produced by
-Phase 4 (phase4_dataset/output/rego_sft.jsonl).
+Phase 7 (phase7_distill_think/output/rego_sft_distilled.jsonl).
 
-Hardware target: single A100 80GB GPU.
+Hardware target: single GPU (A10 24GB with QLoRA, A100 80GB for full fine-tuning).
 
 Usage:
-    # LoRA (default) — ~20GB VRAM, fast
+    # LoRA + packing (default) — fast, ~16GB VRAM
     python train.py
+
+    # Zero truncation — fit longest example (slower, more VRAM)
+    python train.py --fit-all-context
+
+    # Disable packing (preserves example boundaries, slower)
+    python train.py --no-packing
 
     # LoRA without 4-bit quantization (higher VRAM)
     python train.py --no-4bit
@@ -40,14 +46,14 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 # ---------------------------------------------------------------------------
-# Defaults — tuned for Qwen3-4B-Thinking on a single A100 80GB
+# Defaults — tuned for Qwen3-4B-Thinking on a single A10 24GB with QLoRA
 # ---------------------------------------------------------------------------
 DEFAULTS = {
     "model": "Qwen/Qwen3-4B-Thinking-2507",
     "dataset": str(Path(__file__).resolve().parent / "phase7_distill_think" / "output" / "rego_sft_distilled.jsonl"),
     "output_dir": str(Path(__file__).resolve().parent / "output" / "rego-expert-4b"),
-    "max_seq_length": 2048,       # covers ~90% of distilled examples; increase if VRAM allows
-    "batch_size": 2,              # per-device; safe default for 4B + 2048 tokens on ~24GB GPUs
+    "max_seq_length": 4096,       # covers p95+ of examples; use --fit-all-context for zero truncation
+    "batch_size": 2,              # per-device; safe for 4B + 4096 tokens + packing on ~24GB GPUs
     "grad_accum": 8,              # effective batch size = 16
     "epochs": 3,                  # small dataset → multiple passes
     "lr": 2e-5,                   # standard SFT learning rate
@@ -56,6 +62,7 @@ DEFAULTS = {
     "weight_decay": 0.01,
     "max_grad_norm": 1.0,
     "eval_split": 0.05,           # 5% holdout for eval (~122 examples)
+    "packing": True,              # pack multiple examples per sequence (major GPU efficiency win)
     "seed": 42,
     # LoRA defaults
     "lora_r": 16,
@@ -116,6 +123,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lora-dropout", type=float, default=DEFAULTS["lora_dropout"],
                     help="LoRA dropout.")
 
+    # Packing
+    p.add_argument("--packing", dest="packing", action="store_true",
+                    help="Pack multiple examples per sequence (major GPU efficiency win, default).")
+    p.add_argument("--no-packing", dest="packing", action="store_false",
+                    help="Disable packing (preserves example boundaries, slower).")
+    p.set_defaults(packing=DEFAULTS["packing"])
+
     # Misc
     p.add_argument("--resume-from", type=str, default=None,
                     help="Resume training from a checkpoint directory.")
@@ -124,8 +138,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--fit-all-context", dest="fit_all_context", action="store_true",
                     help="Auto-increase max sequence length to avoid truncating any example.")
     p.add_argument("--no-fit-all-context", dest="fit_all_context", action="store_false",
-                    help="Keep --max-seq-length fixed even if examples are longer.")
-    p.set_defaults(fit_all_context=True)
+                    help="Keep --max-seq-length fixed even if examples are longer (default with packing).")
+    p.set_defaults(fit_all_context=False)
 
     return p.parse_args()
 
@@ -181,17 +195,25 @@ def print_config(args: argparse.Namespace, train_ds: Dataset, eval_ds: Dataset |
     print(f"  LoRA:             {'disabled' if args.no_lora else f'r={args.lora_r}, alpha={args.lora_alpha}'}")
     print(f"  Quantization:     {'4-bit QLoRA' if use_4bit else 'none (bf16)'}")
     print(f"  Precision:        bf16")
+    print(f"  Packing:          {'ON (dense sequences, major speedup)' if args.packing else 'OFF (padded sequences)'}")
     print()
     print(f"  Train examples:   {len(train_ds)}")
     print(f"  Eval examples:    {len(eval_ds) if eval_ds else 'none'}")
     print(f"  Max seq length:   {args.max_seq_length}")
     print(f"  Batch size:       {args.batch_size} × {args.grad_accum} = {effective_batch} effective")
     print(f"  Epochs:           {args.epochs}")
-    print(f"  Steps/epoch:      ~{steps_per_epoch}")
-    print(f"  Total steps:      ~{total_steps}")
+    if not args.packing:
+        print(f"  Steps/epoch:      ~{steps_per_epoch}")
+        print(f"  Total steps:      ~{total_steps}")
+    else:
+        print(f"  Steps/epoch:      (determined after packing)")
+        print(f"  Total steps:      (determined after packing)")
     print(f"  Learning rate:    {args.lr}")
     print(f"  LR scheduler:     {args.lr_scheduler}")
-    print(f"  Warmup:           {args.warmup_ratio:.0%} ({int(total_steps * args.warmup_ratio)} steps)")
+    if not args.packing:
+        print(f"  Warmup:           {args.warmup_ratio:.0%} ({int(total_steps * args.warmup_ratio)} steps)")
+    else:
+        print(f"  Warmup:           {args.warmup_ratio:.0%}")
     print(f"  Weight decay:     {args.weight_decay}")
     print(f"  Seed:             {args.seed}")
     print("=" * 60)
@@ -243,9 +265,19 @@ def main() -> None:
     # Load model
     # ------------------------------------------------------------------
     print("Loading model...")
+
+    # Auto-detect Flash Attention 2 for faster training
+    attn_impl = "sdpa"
+    try:
+        import flash_attn  # noqa: F401
+        attn_impl = "flash_attention_2"
+        print("  Flash Attention 2 detected — using for faster attention (~30% speedup).")
+    except ImportError:
+        print("  Flash Attention 2 not found — using SDPA. Install flash-attn for ~30% speedup.")
+
     model_kwargs = {
         "trust_remote_code": True,
-        "attn_implementation": "sdpa",  # PyTorch native; use "flash_attention_2" if flash_attn is installed
+        "attn_implementation": attn_impl,
     }
     if use_4bit:
         model_kwargs.update({
@@ -282,9 +314,11 @@ def main() -> None:
             tokenizer.model_max_length = runtime_max_seq_length
             print(f"  Increased max sequence length to {runtime_max_seq_length} to avoid truncation.")
 
-            # Longer context increases activation memory. Keep the run stable by
-            # reducing micro-batch and preserving effective batch via grad_accum.
-            if args.batch_size > 1:
+            # Without packing, longer context increases activation memory. Keep
+            # the run stable by reducing micro-batch and preserving effective
+            # batch via grad_accum. With packing, sequences are already dense so
+            # the memory impact is smaller — skip the auto-adjustment.
+            if not args.packing and args.batch_size > 1:
                 old_batch = args.batch_size
                 old_accum = args.grad_accum
                 args.batch_size = 1
@@ -324,9 +358,22 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Training config
     # ------------------------------------------------------------------
+    sft_kwargs = {}
+    if args.packing:
+        sft_kwargs["packing"] = True
+        # With packing, eval on packed sequences is noisy — disable it
+        # and rely on train loss + manual eval after training.
+        eval_strat = "no"
+        print(f"  Packing enabled: sequences packed to {args.max_seq_length} tokens (dense, no padding waste).")
+    else:
+        eval_strat = "epoch" if eval_ds else "no"
+
     training_args = SFTConfig(
         output_dir=args.output_dir,
         overwrite_output_dir=True,
+
+        # SFT-specific: sequence length
+        max_seq_length=args.max_seq_length,
 
         # Batch & accumulation
         per_device_train_batch_size=args.batch_size,
@@ -357,7 +404,7 @@ def main() -> None:
         save_total_limit=3,
 
         # Eval
-        eval_strategy="epoch" if eval_ds else "no",
+        eval_strategy=eval_strat,
 
         # Misc
         seed=args.seed,
@@ -369,6 +416,8 @@ def main() -> None:
 
         # Remove unused columns (our dataset has metadata fields)
         remove_unused_columns=True,
+
+        **sft_kwargs,
     )
 
     # ------------------------------------------------------------------
