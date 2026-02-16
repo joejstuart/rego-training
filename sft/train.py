@@ -265,7 +265,7 @@ def main() -> None:
     cuda_available = _detect_cuda()
     if cuda_available:
         gpu_name = torch.cuda.get_device_name(0)
-        gpu_mem = torch.cuda.get_device_properties(0).total_mem / 1e9
+        gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1e9
         print(f"  GPU detected: {gpu_name} ({gpu_mem:.1f} GB)")
     else:
         print("  ⚠ WARNING: No CUDA GPU detected — training will run on CPU (very slow).")
