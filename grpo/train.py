@@ -5,7 +5,7 @@ This is Stage 2 of the training pipeline:
   1. SFT  (sft/train.py)        → teaches Rego syntax, deny patterns, schema grounding
   2. GRPO (this script)          → teaches the model to REASON through ambiguous prompts
 
-Architecture (adapted from the Unsloth Qwen3-4B GRPO notebook):
+Architecture (adapted from the Unsloth Qwen3-4B-Thinking GRPO notebook):
   - Loads the SFT-trained model (LoRA or merged)
   - Reads a pre-built GRPO dataset (grpo/output/grpo_prompts.jsonl)
   - Uses 5 stacked reward functions scored by OPA / Regal evaluation
@@ -108,7 +108,7 @@ DEFAULT_OUTPUT_DIR = str(GRPO_DIR / "output" / "rego-expert-grpo-4b")
 # Defaults
 # ---------------------------------------------------------------------------
 DEFAULTS = {
-    "base_model": "Qwen/Qwen3-4B",
+    "base_model": "Qwen/Qwen3-4B-Thinking-2507",
     "sft_model": DEFAULT_SFT_MODEL,
     "output_dir": DEFAULT_OUTPUT_DIR,
     "max_seq_length": 2048,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SFT training script for Qwen3-4B on SLSA provenance attestation Rego rules.
+"""SFT training script for Qwen3-4B-Thinking on SLSA provenance attestation Rego rules.
 
 Trains using LoRA (default) or full fine-tuning on the dataset produced by
 Phase 4 (phase4_dataset/output/rego_sft.jsonl).
@@ -40,13 +40,13 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 # ---------------------------------------------------------------------------
-# Defaults — tuned for Qwen3-4B on a single A100 80GB
+# Defaults — tuned for Qwen3-4B-Thinking on a single A100 80GB
 # ---------------------------------------------------------------------------
 DEFAULTS = {
-    "model": "Qwen/Qwen3-4B",
-    "dataset": str(Path(__file__).resolve().parent / "phase4_dataset" / "output" / "rego_sft.jsonl"),
+    "model": "Qwen/Qwen3-4B-Thinking-2507",
+    "dataset": str(Path(__file__).resolve().parent / "phase7_distill_think" / "output" / "rego_sft_distilled.jsonl"),
     "output_dir": str(Path(__file__).resolve().parent / "output" / "rego-expert-4b"),
-    "max_seq_length": 2048,       # covers p99≈1853, p100≈1995 (includes schema in system prompt)
+    "max_seq_length": 2048,       # covers ~90% of distilled examples; increase if VRAM allows
     "batch_size": 2,              # per-device; safe default for 4B + 2048 tokens on ~24GB GPUs
     "grad_accum": 8,              # effective batch size = 16
     "epochs": 3,                  # small dataset → multiple passes
@@ -55,7 +55,7 @@ DEFAULTS = {
     "warmup_ratio": 0.1,
     "weight_decay": 0.01,
     "max_grad_norm": 1.0,
-    "eval_split": 0.05,           # 5% holdout for eval (~97 examples)
+    "eval_split": 0.05,           # 5% holdout for eval (~122 examples)
     "seed": 42,
     # LoRA defaults
     "lora_r": 16,
@@ -67,7 +67,7 @@ DEFAULTS = {
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="SFT training for Rego expert (Qwen3-4B)",
+        description="SFT training for Rego expert (Qwen3-4B-Thinking)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 

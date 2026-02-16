@@ -1,7 +1,7 @@
 # SFT Data Pipeline — Rego Expert for SLSA Provenance Attestations
 
 This directory contains the full pipeline for building a Supervised Fine-Tuning
-(SFT) dataset to teach Qwen3-4B to write expert Rego rules for SLSA provenance
+(SFT) dataset to teach Qwen3-4B-Thinking to write expert Rego rules for SLSA provenance
 attestation verification.
 
 ## Approach
@@ -78,10 +78,17 @@ att.json
 │  Datasets                │  reproducible training dataset JSONL.
 │  phase6.3_dataset_merge/ │
 └──────────┬───────────────┘
-           │
+           │  rego_sft_merged.jsonl (2,448 examples)
            ▼
 ┌──────────────────────────┐
-│  SFT Training            │  LoRA fine-tuning on Qwen3-4B
+│  Phase 7: Distill        │  Replace template <think> traces with
+│  <think> Traces          │  high-quality reasoning (3× longer,
+│  phase7_distill_think/   │  domain-aware, edge-case-rich).
+└──────────┬───────────────┘
+           │  rego_sft_distilled.jsonl (2,448 examples)
+           ▼
+┌──────────────────────────┐
+│  SFT Training            │  LoRA fine-tuning on Qwen3-4B-Thinking
 │  train.py                │  (A100 GPU; memory use depends on batch settings)
 └──────────┬───────────────┘
            │  output/rego-expert-4b/
@@ -98,9 +105,13 @@ Base Phase 4 dataset: 2,132 examples
   custom value:          58  (value swap + operator flip)
   modifications:        456  (152 mods × 3 variants)
 
-Current merged training dataset (Phase 6.3): 2,448 examples
+Merged training dataset (Phase 6.3): 2,448 examples
   phase4:             2,132
   phase6 candidates:    316
+
+Final training dataset (Phase 7): 2,448 examples
+  Same examples as Phase 6.3 but with distilled <think> traces
+  (avg 399 → 1,195 chars, 3.0× improvement across all examples)
 ```
 
 ## Directory Structure
@@ -157,6 +168,32 @@ sft/
 │   └── output/
 │       └── modifications.jsonl        ← 152 modification records
 │
+├── phase6.1_policy_candidates/
+│   ├── README.md                      ← Phase 6.1 documentation
+│   ├── build_tasks.py                 ← Normalizes candidates into task layout
+│   └── output/tasks/                  ← One directory per candidate
+│
+├── phase6.2_candidate_dataset/
+│   ├── README.md                      ← Phase 6.2 documentation
+│   ├── assemble_dataset.py            ← Candidate tasks → SFT records
+│   └── output/
+│       └── policy_candidates_sft.jsonl
+│
+├── phase6.3_dataset_merge/
+│   ├── README.md                      ← Phase 6.3 documentation
+│   ├── merge_datasets.py              ← Merge phase4 + phase6.2
+│   └── output/
+│       └── rego_sft_merged.jsonl      ← 2,448 merged examples
+│
+├── phase7_distill_think/
+│   ├── README.md                      ← Phase 7 documentation
+│   ├── AUDIT_REPORT.md                ← Before/after quality comparison
+│   └── output/
+│       └── rego_sft_distilled.jsonl   ← 2,448 examples with distilled traces ★
+│
+├── policy_release_candidates/         ← Hand-written candidate rules + tests
+│
+├── requirements.txt                   ← Python dependencies for SFT
 ├── train.py                           ← SFT training script (LoRA default)
 ├── inference.py                       ← Inference script (LoRA stacking support)
 └── output/
@@ -167,11 +204,11 @@ sft/
 
 - Python 3.10+
 - OPA CLI (`opa`) — used for `opa check` (syntax) and `opa test` (validation)
-- The source attestation at `../att.json`
+- The source attestation at `data/att.json` (symlinks to `../att.json`)
 
 For training (A100 GPU):
 ```bash
-pip install torch transformers trl peft datasets
+pip install -r requirements.txt
 ```
 
 Install OPA:
@@ -219,11 +256,17 @@ python phase6.2_candidate_dataset/assemble_dataset.py
 # Phase 6.3: Merge phase4 dataset + phase6.2 dataset
 python phase6.3_dataset_merge/merge_datasets.py
 
+# Phase 7: The distilled dataset (rego_sft_distilled.jsonl) is pre-built.
+# train.py uses it by default. To regenerate from the merged dataset,
+# see phase7_distill_think/README.md.
+
 # Train (on A100 GPU)
-python train.py              # LoRA (default)
-python train.py --dataset ./phase6.3_dataset_merge/output/rego_sft_merged.jsonl
+python train.py              # LoRA (default) — uses distilled dataset
 python train.py --no-lora    # Full fine-tuning (higher VRAM)
 python train.py --dry-run    # Print config without training
+
+# To train on the merged dataset (without distilled traces) instead:
+python train.py --dataset ./phase6.3_dataset_merge/output/rego_sft_merged.jsonl
 ```
 
 ## Inference
@@ -241,7 +284,7 @@ python inference.py --model ./output/rego-expert-4b \
     --prompt "Write Rego policy code to validate predicateType"
 
 # Use the base model (no fine-tuning) for comparison
-python inference.py --model Qwen/Qwen3-4B
+python inference.py --model Qwen/Qwen3-4B-Thinking-2507
 
 # Disable thinking (faster, no <think> block)
 python inference.py --model ./output/rego-expert-4b --no-think
@@ -298,14 +341,22 @@ Rule modifications (Phase 5):
 ## `<think>` Reasoning Traces
 
 Every example includes a `<think>` block that teaches the model HOW to
-approach the problem before writing code:
+approach the problem before writing code.
 
-- **Standard traces** (tier-aware): Identify fields, iteration strategy,
-  comparison pattern.
-- **Schema-resolution traces** (ambiguous variants): Map informal field names
-  to correct attestation paths.
-- **Compositional traces** (return directives, custom values): Explicitly
-  decompose the task into DATA → CONDITION → RETURN components.
+**Phase 4** generates template-based traces (short, formulaic):
+- Tier-aware patterns: field path, iteration strategy, comparison pattern
+- Schema-resolution: Map informal names to correct attestation paths
+- Compositional: DATA → CONDITION → RETURN decomposition
+
+**Phase 7** replaces these with distilled traces (3× longer, domain-aware):
+- Step-by-step reasoning through the implementation
+- SLSA/Tekton domain context explaining *why* the check matters
+- Edge case analysis (missing fields, empty arrays, Rego truthiness)
+- Alternative approaches and debugging insights
+
+The final training dataset (`rego_sft_distilled.jsonl`) uses the Phase 7
+distilled traces. See `phase7_distill_think/AUDIT_REPORT.md` for the full
+before/after comparison.
 
 ## Design Decisions
 
@@ -378,7 +429,7 @@ what healthy values look like, and how to spot problems.
 
 ### Healthy Training Trajectory
 
-A well-behaved SFT run on this dataset (~2,132 examples, 3 epochs) looks
+A well-behaved SFT run on this dataset (~2,448 examples, 3 epochs) looks
 roughly like this:
 
 **Epoch 1 — Rapid learning phase:**

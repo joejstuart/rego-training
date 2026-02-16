@@ -1,0 +1,30 @@
+# SFT training requirements
+# GPU: NVIDIA A100 80GB (or any GPU with ≥20GB VRAM for LoRA/QLoRA)
+# Python 3.10+
+#
+# Install with:
+#   pip install -r sft/requirements.txt
+#
+# For the data pipeline only (phases 0–7, no GPU needed):
+#   pip install transformers datasets jinja2
+#
+# NOTE: Versions are pinned to match grpo/requirements.txt for compatibility.
+#       If training both SFT and GRPO, use grpo/requirements.txt (superset).
+
+# ── Core training stack ──────────────────────────────────────────────
+torch>=2.4.0
+transformers>=4.45.0
+trl>=0.12.0
+peft>=0.13.0
+datasets>=3.0.0
+accelerate>=1.0.0
+
+# ── Quantisation (for QLoRA / 4-bit training) ────────────────────────
+bitsandbytes>=0.44.0
+
+# ── Tokenizer / templating ───────────────────────────────────────────
+jinja2>=3.1.0
+sentencepiece>=0.2.0
+
+# ── Data pipeline utilities ──────────────────────────────────────────
+# No additional packages needed — phases 0–7 use only stdlib + transformers

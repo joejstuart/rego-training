@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 4: Assemble the SFT dataset optimized for Qwen3-4B.
+"""Phase 4: Assemble the SFT dataset optimized for Qwen3-4B-Thinking.
 
 For each of the 60 tasks that passed Phase 3, this script:
   1. Loads the canonical instruction (Phase 1), rule (Phase 3), and test (Phase 3).
@@ -2232,10 +2232,10 @@ def run_token_audit(examples: list[dict]) -> None:
         print("  Install: pip install transformers jinja2")
         return
 
-    print("\n--- Token Audit (Qwen3-4B tokenizer) ---")
+    print("\n--- Token Audit (Qwen3-4B-Thinking tokenizer) ---")
     print("Loading tokenizer...")
 
-    tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B", trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Thinking-2507", trust_remote_code=True)
 
     token_counts = []
     for ex in examples:
