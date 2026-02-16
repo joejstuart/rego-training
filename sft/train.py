@@ -219,6 +219,38 @@ def print_config(args: argparse.Namespace, train_ds: Dataset, eval_ds: Dataset |
     print("=" * 60)
 
 
+def _detect_cuda() -> bool:
+    """Robust CUDA detection that handles containerised environments.
+
+    In OpenShift / Kubernetes pods the NVML management library often fails
+    (``Can't initialize NVML``) even when the GPU *is* available via the
+    CUDA runtime.  ``torch.cuda.is_available()`` may return ``False`` in
+    that situation.  We try harder by calling into the CUDA runtime
+    directly.
+    """
+    # Fast path: standard PyTorch check.
+    if torch.cuda.is_available():
+        return True
+
+    # NVML may have failed — try the CUDA runtime directly.
+    try:
+        count = torch.cuda.device_count()     # calls cudaGetDeviceCount
+        if count > 0:
+            # Force-initialise so later calls work.
+            torch.cuda.init()
+            return True
+    except Exception:
+        pass
+
+    # Last resort: check for /dev/nvidia* devices.
+    import glob
+    if glob.glob("/dev/nvidia[0-9]*"):
+        print("  WARNING: GPU devices found in /dev but torch.cuda failed.")
+        print("           Ensure NVIDIA container runtime is configured.")
+
+    return False
+
+
 def main() -> None:
     # Helps reduce CUDA memory fragmentation on long-running training jobs.
     # Mitigate CUDA memory fragmentation (renamed in PyTorch ≥2.9).
@@ -226,7 +258,23 @@ def main() -> None:
 
     args = parse_args()
     use_4bit = (not args.no_lora) and (not args.no_4bit)
-    bf16_ok = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+
+    # ------------------------------------------------------------------
+    # GPU diagnostics
+    # ------------------------------------------------------------------
+    cuda_available = _detect_cuda()
+    if cuda_available:
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_mem = torch.cuda.get_device_properties(0).total_mem / 1e9
+        print(f"  GPU detected: {gpu_name} ({gpu_mem:.1f} GB)")
+    else:
+        print("  ⚠ WARNING: No CUDA GPU detected — training will run on CPU (very slow).")
+        print("    If you have a GPU, check:")
+        print("      1. nvidia-smi works inside this container")
+        print("      2. NVIDIA_VISIBLE_DEVICES / CUDA_VISIBLE_DEVICES are set")
+        print("      3. The container has the NVIDIA runtime configured")
+
+    bf16_ok = cuda_available and torch.cuda.is_bf16_supported()
     compute_dtype = torch.bfloat16 if bf16_ok else torch.float16
 
     # ------------------------------------------------------------------
@@ -243,7 +291,10 @@ def main() -> None:
     # ------------------------------------------------------------------
     print_config(args, train_ds, eval_ds)
     if not bf16_ok:
-        print("  WARNING: bf16 not supported on this GPU; falling back to fp16.")
+        if cuda_available:
+            print("  NOTE: bf16 not supported on this GPU; falling back to fp16.")
+        else:
+            print("  NOTE: No GPU detected; using fp16 on CPU.")
 
     if args.dry_run:
         print("\n  [DRY RUN] — exiting without training.\n")
@@ -266,31 +317,32 @@ def main() -> None:
     # ------------------------------------------------------------------
     print("Loading model...")
 
-    # Auto-detect Flash Attention 2 for faster training
+    # Auto-detect Flash Attention 2 — requires both the package AND a CUDA GPU.
     attn_impl = "sdpa"
-    try:
-        import flash_attn  # noqa: F401
-        attn_impl = "flash_attention_2"
-        print("  Flash Attention 2 detected — using for faster attention (~30% speedup).")
-    except ImportError:
-        print("  Flash Attention 2 not found — using SDPA. Install flash-attn for ~30% speedup.")
+    if cuda_available:
+        try:
+            import flash_attn  # noqa: F401
+            attn_impl = "flash_attention_2"
+            print("  Flash Attention 2 detected — using for faster attention (~30% speedup).")
+        except ImportError:
+            print("  Flash Attention 2 not found — using SDPA. Install flash-attn for ~30% speedup.")
+    else:
+        print("  Using eager attention (no GPU).")
+        attn_impl = "eager"
 
     model_kwargs = {
         "trust_remote_code": True,
         "attn_implementation": attn_impl,
+        "device_map": "auto",           # let accelerate place layers on available devices
+        "low_cpu_mem_usage": True,       # stream weights to avoid 2× memory spike
     }
     if use_4bit:
-        model_kwargs.update({
-            "quantization_config": BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=compute_dtype,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True,
-            ),
-        })
-        if not torch.cuda.is_available():
-            model_kwargs["device_map"] = "auto"
-            model_kwargs["low_cpu_mem_usage"] = True
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=compute_dtype,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
     else:
         model_kwargs["torch_dtype"] = compute_dtype
 
@@ -407,7 +459,7 @@ def main() -> None:
 
         # Misc
         seed=args.seed,
-        dataloader_pin_memory=torch.cuda.is_available(),
+        dataloader_pin_memory=cuda_available,
         dataloader_num_workers=4,
         gradient_checkpointing=not args.no_lora,  # save memory with LoRA
         gradient_checkpointing_kwargs={"use_reentrant": False} if not args.no_lora else None,
