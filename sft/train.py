@@ -361,9 +361,8 @@ def main() -> None:
     sft_kwargs = {}
     if args.packing:
         sft_kwargs["packing"] = True
-        # With packing, eval on packed sequences is noisy — disable it
-        # and rely on train loss + manual eval after training.
-        eval_strat = "no"
+        sft_kwargs["eval_packing"] = False  # keep eval clean / comparable across runs
+        eval_strat = "epoch" if eval_ds else "no"
         print(f"  Packing enabled: sequences packed to {args.max_seq_length} tokens (dense, no padding waste).")
     else:
         eval_strat = "epoch" if eval_ds else "no"
@@ -372,8 +371,8 @@ def main() -> None:
         output_dir=args.output_dir,
         overwrite_output_dir=True,
 
-        # SFT-specific: sequence length
-        max_seq_length=args.max_seq_length,
+        # SFT-specific: sequence length (controls truncation and packing block size)
+        max_length=args.max_seq_length,
 
         # Batch & accumulation
         per_device_train_batch_size=args.batch_size,
