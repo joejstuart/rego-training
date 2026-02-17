@@ -156,8 +156,9 @@ def reward_format(completions, task_type=None, **kwargs) -> list[float]:
       - ``import rego.v1``                (+0.5, -1.0 if missing)      — checked on CODE only
       - ``deny contains msg if``          (+2.0, -3.0 if missing)      — checked on CODE only
       - ``sprintf``                       (+0.5, no penalty if missing) — checked on CODE only
+      - think-length efficiency           (+0.5 concise, -1.0/-1.5 excessive) — ratio of think to code
 
-    Max: +5.0, Min: -7.0.
+    Max: +5.5, Min: -8.5.
 
     IMPORTANT: Code-structure checks use the extracted code (after ``</think>``),
     NOT the full response. This prevents the model from gaming the reward by
@@ -201,6 +202,29 @@ def reward_format(completions, task_type=None, **kwargs) -> list[float]:
             score += 0.5 if " := " in code else 0.0
         else:
             score += 0.5 if "sprintf" in code else 0.0
+
+        # Think-length efficiency: reward concise reasoning that still
+        # produces substantial code.  Penalise completions where <think>
+        # dominates and code is tiny (often a sign of truncation or
+        # rambling reasoning that never gets to the answer).
+        think_text = ""
+        tm = re.search(r"<think>(.*?)</think>", response, re.DOTALL)
+        if tm:
+            think_text = tm.group(1)
+        think_len = len(think_text)
+        code_len = len(code) if code else 0
+
+        if code_len > 50 and think_len > 0:
+            ratio = think_len / code_len
+            if ratio <= 2.0:
+                # Concise reasoning relative to code output — small bonus
+                score += 0.5
+            elif ratio > 5.0:
+                # Excessive thinking with little code — penalty
+                score -= 1.0
+        elif think_len > 200 and code_len <= 50:
+            # Long think but essentially no code (likely truncated)
+            score -= 1.5
 
         scores.append(score)
     return scores
@@ -475,11 +499,11 @@ def reward_schema_paths(completions, **kwargs) -> list[float]:
 # ===========================================================================
 
 ALL_REWARD_FUNCS = [
-    reward_format,       # max +5.0 / min -7.0  — structural shape
+    reward_format,       # max +5.5 / min -8.5  — structural shape + think efficiency
     reward_opa_parse,    # max +2.0 / min -2.0  — syntactic validity
     reward_opa_test,     # max +5.0 / min -4.0  — functional correctness (strongest signal)
     reward_schema_paths, # max +1.0 / min -∞    — schema grounding
     reward_regal_lint,   # max +2.0 / min -2.0  — idiomatic style
     # ─────────────────────────────────────────
-    # Perfect score: +15.0    Worst: -17.0 (approx)
+    # Perfect score: +15.5    Worst: -18.5 (approx)
 ]
