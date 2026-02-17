@@ -10,6 +10,19 @@ Five stacked reward signals scored by OPA / Regal evaluation:
 
 Total signal range: +15.0 (perfect) to -17.0 (worst).
 
+─── Truncation handling ─────────────────────────────────────────────
+
+  All five reward functions detect **truncated completions** (those that
+  hit the token limit before finishing) and return **0.0** (neutral).
+  This prevents false negative signals — a truncated completion would
+  otherwise fail opa_parse (-2), opa_test (-4), regal_lint (-2) simply
+  because it ran out of tokens, teaching the model the wrong lesson.
+
+  Detection heuristics:
+    1. ``<think>`` opened but ``</think>`` never closed → mid-reasoning
+    2. ``</think>`` present but code has significantly unclosed braces
+       → code was cut mid-rule
+
 ─── How these scores affect model weights ─────────────────────────────
 
   GRPOTrainer calls ALL 5 functions on each completion and **sums** the
@@ -107,6 +120,39 @@ def _get_valid_prefixes() -> set[str]:
 
 
 # ===========================================================================
+# Truncation detection
+# ===========================================================================
+
+def _is_truncated(response: str) -> bool:
+    """Detect if a completion was truncated (hit token limit before finishing).
+
+    A truncated completion gives false negative signals — the model is
+    penalised for running out of tokens, not for producing bad Rego.
+    Reward functions should return **0.0** (neutral) for truncated
+    completions to avoid teaching the model the wrong lesson.
+
+    Heuristics:
+      1. ``<think>`` opened but never closed → still reasoning when cut off.
+      2. ``</think>`` present but code has significantly unclosed braces
+         → code was cut mid-rule.
+    """
+    # Case 1: Think tag opened but never closed — model was mid-reasoning
+    if "<think>" in response and "</think>" not in response:
+        return True
+
+    # Case 2: Got past </think> but code is incomplete
+    code = _extract_rego_code(response)
+    if code:
+        open_braces = code.count("{")
+        close_braces = code.count("}")
+        # More than 1 unclosed brace strongly suggests truncation
+        if open_braces > close_braces + 1:
+            return True
+
+    return False
+
+
+# ===========================================================================
 # Rego code extraction helpers
 # ===========================================================================
 
@@ -167,6 +213,12 @@ def reward_format(completions, task_type=None, **kwargs) -> list[float]:
     scores = []
     for i, completion in enumerate(completions):
         response = completion[0]["content"]
+
+        # Truncated completions get neutral score — no false signal.
+        if _is_truncated(response):
+            scores.append(0.0)
+            continue
+
         code = _extract_rego_code(response) or ""
         tt = task_type[i] if isinstance(task_type, list) and i < len(task_type) else "deny_rule"
         score = 0.0
@@ -250,6 +302,12 @@ def reward_opa_parse(completions, **kwargs) -> list[float]:
     scores = []
     for completion in completions:
         response = completion[0]["content"]
+
+        # Truncated completions get neutral score — no false signal.
+        if _is_truncated(response):
+            scores.append(0.0)
+            continue
+
         code = _extract_rego_code(response)
         if code is None:
             scores.append(-2.0)
@@ -302,6 +360,12 @@ def reward_opa_test(completions, test_code, package_name, task_type=None, **kwar
     scores = []
     for i, (completion, tc, pkg) in enumerate(zip(completions, test_code, package_name)):
         response = completion[0]["content"]
+
+        # Truncated completions get neutral score — no false signal.
+        if _is_truncated(response):
+            scores.append(0.0)
+            continue
+
         code = _extract_rego_code(response)
         if code is None:
             scores.append(-4.0)
@@ -386,6 +450,12 @@ def reward_regal_lint(completions, **kwargs) -> list[float]:
     scores = []
     for completion in completions:
         response = completion[0]["content"]
+
+        # Truncated completions get neutral score — no false signal.
+        if _is_truncated(response):
+            scores.append(0.0)
+            continue
+
         code = _extract_rego_code(response)
         if code is None:
             scores.append(-2.0)
@@ -459,6 +529,12 @@ def reward_schema_paths(completions, **kwargs) -> list[float]:
     scores = []
     for completion in completions:
         response = completion[0]["content"]
+
+        # Truncated completions get neutral score — no false signal.
+        if _is_truncated(response):
+            scores.append(0.0)
+            continue
+
         code = _extract_rego_code(response)
         if code is None:
             scores.append(-1.0)
